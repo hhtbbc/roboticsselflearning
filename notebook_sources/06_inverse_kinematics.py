@@ -1,0 +1,375 @@
+# ---
+# jupyter:
+#   jupytext:
+#     text_representation:
+#       extension: .py
+#       format_name: percent
+#       format_version: '1.3'
+#   kernelspec:
+#     display_name: Python (robotics-learning)
+#     language: python
+#     name: robotics-learning
+# ---
+
+# %% [markdown]
+# # Notebook 06：逆运动学（Inverse Kinematics）
+#
+# ## 1. 本节在知识体系中的位置
+#
+# ```
+# NB05 正运动学 ──→ NB06 逆运动学 ──→ NB13 轨迹规划 (IK 提供目标)
+#                       │
+#                       ├──→ NB07 雅可比 (数值 IK 依赖 J)
+#                       └──→ NB17 控制 (期望关节角 = IK 输出)
+# ```
+#
+# 逆运动学（IK）回答：**"给定末端目标位姿，各关节角应该是多少？"** 这是机器人运动控制的直接需求——我们通常知道"手要放在哪里"，需要反推出"每个关节转多少度"。
+
+# %% [markdown]
+# ## 2. 学习目标
+#
+# - ⭐ 理解 IK 的多解性、无解和冗余度
+# - ⭐ 掌握 2R 平面臂的几何法 IK（余弦定理法）
+# - ⭐ 掌握代数法 IK 的基本思路（利用 DH 矩阵展开）
+# - ⭐ 实现数值 IK（雅可比伪逆法 + 阻尼最小二乘法）
+# - ⭐ 理解牛顿-拉夫森迭代与雅可比伪逆的关系
+# - 📖 Pieper 准则：6-DOF 解析解的条件
+# - 📚 带避障的 IK 和全局 IK 方法
+
+# %% [markdown]
+# ## 3. 前置知识
+#
+# - NB05：正运动学、DH 参数
+# - NB07 预览：雅可比矩阵 $\mathbf{J}(\mathbf{q}) = \partial\mathbf{f}(\mathbf{q})/\partial\mathbf{q}$
+
+# %% [markdown]
+# ## 4. IK 问题的定义 ⭐
+#
+# **给定**：期望末端位姿 $\mathbf{T}_{des} \in SE(3)$（或仅位置 $\mathbf{p}_{des} \in \mathbb{R}^3$）
+# **求**：关节角 $\mathbf{q}^* \in \mathbb{R}^n$ 使得 $FK(\mathbf{q}^*) = \mathbf{T}_{des}$
+#
+# ### 4.1 IK 的核心困难
+#
+# 1. **多解性**：同一个末端位姿通常对应多组关节角（elbow up / elbow down）
+# 2. **无解**：目标位置在工作空间之外
+# 3. **冗余度**：$n > m$（关节数 > 任务自由度）时有无穷多解
+# 4. **关节限制**：解必须在 $[\mathbf{q}_{min}, \mathbf{q}_{max}]$ 范围内
+# 5. **奇异性**：在奇异位型附近，小末端运动需要大关节运动
+
+# %% [markdown]
+# ## 5. 几何法 IK ⭐
+
+# %% [markdown]
+# ### 5.1 2R 平面臂的余弦定理法
+#
+# 对 2R 臂，末端位置 $(x, y)$ 已知。这是一个三角形问题：
+#
+# ```
+# 已知：l₁, l₂, r = √(x² + y²)
+# 求：q₁, q₂
+#
+#   目标 (x,y)
+#     *
+#    /|
+#  l₂/ |
+#   /  |
+#  *---*
+#   l₁  |
+#       |
+#       O (基座)
+# ```
+#
+# **步骤 1**：用余弦定理求 $q_2$
+# $$r^2 = l_1^2 + l_2^2 - 2l_1 l_2 \cos(\pi - q_2) = l_1^2 + l_2^2 + 2l_1 l_2 \cos q_2$$
+# $$\cos q_2 = \frac{r^2 - l_1^2 - l_2^2}{2l_1 l_2}$$
+#
+# 两个解：
+# $$q_2 = \pm \arccos\left(\frac{r^2 - l_1^2 - l_2^2}{2l_1 l_2}\right)$$
+# $q_2 > 0$：elbow down（肘在下），$q_2 < 0$：elbow up（肘在上）
+#
+# **步骤 2**：用反正切求 $q_1$
+# $$q_1 = \text{atan2}(y, x) - \text{atan2}(l_2 \sin q_2, l_1 + l_2 \cos q_2)$$
+
+# %% [markdown]
+# ### 5.2 可到达条件
+#
+# 目标在可到达范围内当且仅当：
+# $$|l_1 - l_2| \leq r \leq l_1 + l_2$$
+#
+# - $r < |l_1 - l_2|$：目标太近（在"洞"内）
+# - $r > l_1 + l_2$：目标太远
+
+# %% [markdown]
+# ## 6. 代数法 IK
+
+# %% [markdown]
+# ### 6.1 基本思路
+#
+# 将 FK 方程展开，通过匹配 DH 变换矩阵的元素，将 $\mathbf{T}_{des}$ 的每个元素写成三角函数组合，然后求解三角方程。
+#
+# 核心技巧：
+# - 将 $\sin\theta$ 和 $\cos\theta$ 作为两个未知数
+# - 使用半角代换 $u = \tan(\theta/2)$
+# - 使用 $\text{atan2}(y, x)$ 获取正确的象限
+#
+# ### 6.2 三角方程求解标准模式
+#
+# 方程 $a \cos\theta + b \sin\theta = c$ 的解：
+# 令 $r = \sqrt{a^2 + b^2}$, $\phi = \text{atan2}(b, a)$，则
+# $$\cos(\theta - \phi) = \frac{c}{r}$$
+# $$\theta = \phi \pm \arccos(c/r)$$
+#
+# 当 $|c| > r$ 时无解（目标不可达）。
+
+# %% [markdown]
+# ## 7. 数值法 IK ⭐
+
+# %% [markdown]
+# ### 7.1 牛顿-拉夫森迭代
+#
+# 将 FK 写为 $\mathbf{x} = \mathbf{f}(\mathbf{q})$。给定目标 $\mathbf{x}_{des}$，求解非线性方程 $\mathbf{f}(\mathbf{q}) = \mathbf{x}_{des}$。
+#
+# 一阶泰勒展开（在 $\mathbf{q}_k$ 附近）：
+# $$\mathbf{x}_{des} \approx \mathbf{f}(\mathbf{q}_k) + \mathbf{J}(\mathbf{q}_k)(\mathbf{q}_{k+1} - \mathbf{q}_k)$$
+#
+# $$\Delta\mathbf{q} = \mathbf{J}^+(\mathbf{q}_k)(\mathbf{x}_{des} - \mathbf{f}(\mathbf{q}_k))$$
+# $$\mathbf{q}_{k+1} = \mathbf{q}_k + \Delta\mathbf{q}$$
+
+# %% [markdown]
+# ### 7.2 阻尼最小二乘（DLS / Levenberg-Marquardt）
+#
+# 当雅可比接近奇异时（$\sigma_{\min} \approx 0$），伪逆的 $\Delta\mathbf{q}$ 会爆炸。DLS 加阻尼项抑制：
+#
+# $$\min_{\Delta\mathbf{q}} \|\mathbf{J}\Delta\mathbf{q} - \Delta\mathbf{x}\|^2 + \lambda^2\|\Delta\mathbf{q}\|^2$$
+#
+# 闭式解：
+# $$\Delta\mathbf{q} = \mathbf{J}^T(\mathbf{J}\mathbf{J}^T + \lambda^2\mathbf{I})^{-1}\Delta\mathbf{x}$$
+#
+# 或者用 SVD：将 $\sigma_i$ 替换为 $\sigma_i/(\sigma_i^2 + \lambda^2)$。
+#
+# $\lambda$ 的作用：
+# - $\lambda$ 大 → $\Delta\mathbf{q}$ 小（稳定但收敛慢）
+# - $\lambda$ 小 → 接近伪逆（快但可能不稳定）
+# - 自适应 $\lambda$：误差大时减小，接近奇异时增大
+
+# %% [markdown]
+# ## 8. Python 实现与可视化
+
+# %%
+import numpy as np
+import matplotlib.pyplot as plt
+import sys
+sys.path.insert(0, '..')
+from src.robotics_learning.kinematics import (
+    forward_kinematics, ik_2r_geometric, ik_numerical
+)
+from src.robotics_learning.transforms import homogenous_transform, rot_z
+%matplotlib inline
+print("✅ 导入完成")
+
+# %% [markdown]
+# ### 8.1 几何法 IK 演示
+
+# %%
+l1, l2 = 1.0, 0.8
+# 目标位置
+x_target, y_target = 1.2, 0.6
+
+solutions = ik_2r_geometric(l1, l2, x_target, y_target)
+print(f"目标位置: ({x_target}, {y_target})")
+print(f"解的数量: {len(solutions)}")
+for i, (q1, q2) in enumerate(solutions):
+    print(f"  Solution {i+1}: q₁={np.degrees(q1):.1f}°, q₂={np.degrees(q2):.1f}°")
+    # 用 FK 验证
+    dh = np.array([[l1, 0, 0, q1], [l2, 0, 0, q2]])
+    T_end, _ = forward_kinematics(dh)
+    p = T_end[:2, 3]
+    print(f"    FK 验证: ({p[0]:.4f}, {p[1]:.4f}), 误差={np.linalg.norm(p - [x_target, y_target]):.6f}")
+
+# %% [markdown]
+# ### 8.2 IK 多解可视化
+
+# %%
+fig, axes = plt.subplots(1, len(solutions), figsize=(6*len(solutions), 6))
+if len(solutions) == 1:
+    axes = [axes]
+
+for ax, (q1, q2) in zip(axes, solutions):
+    # 画机械臂
+    x1 = l1 * np.cos(q1)
+    y1 = l1 * np.sin(q1)
+    x2 = x1 + l2 * np.cos(q1 + q2)
+    y2 = y1 + l2 * np.sin(q1 + q2)
+
+    ax.plot([0, x1, x2], [0, y1, y2], 'b-o', linewidth=3, markersize=8)
+    ax.plot(0, 0, 'ks', markersize=10)
+    ax.plot(x_target, y_target, 'r*', markersize=15, label='Target')
+    ax.plot(x2, y2, 'gx', markersize=10, label='IK Solution')
+
+    # 画工作空间边界
+    theta_c = np.linspace(0, 2*np.pi, 200)
+    ax.plot((l1+l2)*np.cos(theta_c), (l1+l2)*np.sin(theta_c), 'k--', alpha=0.2)
+    ax.plot(abs(l1-l2)*np.cos(theta_c), abs(l1-l2)*np.sin(theta_c), 'k--', alpha=0.2)
+
+    label = 'Elbow Down' if q2 > 0 else 'Elbow Up'
+    ax.set_title(f'{label}\nθ₁={np.degrees(q1):.1f}°, θ₂={np.degrees(q2):.1f}°')
+    ax.set_xlim([-2, 2]); ax.set_ylim([-2, 2])
+    ax.set_xlabel('X'); ax.set_ylabel('Y')
+    ax.set_aspect('equal'); ax.legend(); ax.grid(True, alpha=0.3)
+
+plt.tight_layout()
+plt.savefig('../outputs/06_ik_multiple_solutions.png', dpi=100, bbox_inches='tight')
+plt.show()
+
+# %% [markdown]
+# ### 8.3 数值 IK — 收敛过程可视化
+
+# %%
+def numerical_ik_with_history(dh_fixed, T_des, q_init, max_iter=50, tol=1e-6, damping=0.1):
+    """数值 IK 并记录迭代历史"""
+    q = q_init.copy()
+    history = [q.copy()]
+    errors = []
+
+    for it in range(max_iter):
+        dh_full = np.column_stack([dh_fixed, q])
+        T_curr, _ = forward_kinematics(dh_full)
+        p_err = T_des[:3, 3] - T_curr[:3, 3]
+        error = np.linalg.norm(p_err)
+        errors.append(error)
+
+        if error < tol:
+            break
+
+        from src.robotics_learning.kinematics import compute_geometric_jacobian
+        J = compute_geometric_jacobian(dh_fixed, q)
+        J_v = J[:3, :]  # 只用线速度部分
+
+        if damping > 0:
+            # DLS
+            JJT = J_v @ J_v.T
+            delta_q = J_v.T @ np.linalg.solve(JJT + damping**2 * np.eye(3), p_err)
+        else:
+            delta_q = np.linalg.pinv(J_v) @ p_err
+
+        q = q + delta_q
+        history.append(q.copy())
+
+    return np.array(history), np.array(errors), it + 1
+
+# 3R 臂：目标位姿
+l1, l2, l3 = 1.0, 0.8, 0.5
+q_target = np.array([np.pi/4, np.pi/6, -np.pi/3])
+dh_fixed = np.array([[0, np.pi/2, l1], [l2, 0, 0], [l3, 0, 0]])
+dh_full_target = np.column_stack([dh_fixed, q_target])
+T_des, _ = forward_kinematics(dh_full_target)
+p_des = T_des[:3, 3]
+print(f"目标位姿 (由 FK 生成): q={np.degrees(q_target)}")
+print(f"目标位置: {np.round(p_des, 4)}")
+
+# 用不同的初值做数值 IK
+q_init = np.array([0.2, 0.2, 0.2])
+history, errors, n_iters = numerical_ik_with_history(dh_fixed, T_des, q_init, damping=0.05)
+
+print(f"\n迭代次数: {n_iters}")
+print(f"最终关节角: {np.degrees(history[-1])}")
+print(f"与真值差距: {np.linalg.norm(history[-1] - q_target):.6f}")
+
+# 可视化收敛
+fig, axes = plt.subplots(1, 2, figsize=(14, 5))
+
+axes[0].semilogy(range(1, len(errors)+1), errors, 'b-o', linewidth=2)
+axes[0].set_xlabel('Iteration'); axes[0].set_ylabel('Position Error (m)')
+axes[0].set_title('Numerical IK Convergence')
+axes[0].grid(True, alpha=0.3)
+
+axes[1].plot(history[:, 0], history[:, 1], 'b-o', linewidth=1.5, markersize=4, label='Path')
+axes[1].scatter(*history[0, :2], c='red', s=100, zorder=5, label='Start')
+axes[1].scatter(*history[-1, :2], c='green', s=100, zorder=5, label='Converged')
+axes[1].scatter(*q_target[:2], c='orange', s=150, marker='*', zorder=5, label='Target')
+axes[1].set_xlabel('q₁'); axes[1].set_ylabel('q₂')
+axes[1].set_title('Joint Space Trajectory')
+axes[1].legend(); axes[1].grid(True, alpha=0.3)
+
+plt.tight_layout()
+plt.savefig('../outputs/06_numerical_ik_convergence.png', dpi=100, bbox_inches='tight')
+plt.show()
+
+# %% [markdown]
+# ### 8.4 伪逆 vs 阻尼最小二乘
+
+# %%
+# 当雅可比接近奇异时对比两种方法
+# 模拟 2R 臂在奇异位型附近
+q_singular = np.array([0.1, np.pi - 0.01])  # 接近完全伸展
+dh_singular = np.array([[1.0, 0, 0], [0.8, 0, 0]])
+
+from src.robotics_learning.kinematics import compute_geometric_jacobian
+J_test = compute_geometric_jacobian(dh_singular, q_singular)[:2, :]
+U, s, Vt = np.linalg.svd(J_test)
+
+print(f"在 q = ({np.degrees(q_singular[0]):.1f}°, {np.degrees(q_singular[1]):.1f}°) 处:")
+print(f"雅可比奇异值: σ₁={s[0]:.4f}, σ₂={s[1]:.6f}")
+print(f"条件数: κ(J) = {s[0]/s[1]:.2e}")
+
+# 给一个小的末端误差 → 看关节速度放大
+dx = np.array([0.01, 0.0])  # 1cm 误差
+
+dq_pinv = np.linalg.pinv(J_test) @ dx
+print(f"\n伪逆 Δq: {np.round(dq_pinv, 6)} (可能很大!)")
+
+for lam in [0.01, 0.1, 0.5]:
+    JJT = J_test @ J_test.T
+    dq_dls = J_test.T @ np.linalg.solve(JJT + lam**2 * np.eye(2), dx)
+    print(f"DLS (λ={lam}): Δq = {np.round(dq_dls, 6)} (被阻尼抑制)")
+
+# %% [markdown]
+# ## 9. 常见错误与易混淆概念
+#
+# 1. **atan vs atan2**：角度提取必须用 `atan2(y, x)`，用 `atan(y/x)` 会丢失象限信息（NB03 同样强调）。
+# 2. **关节角不唯一**：即使"同一个解"也有 $\theta$ 和 $\theta + 2\pi k$ 多个数学表示。实际选择时应取最近的（最小关节运动）。
+# 3. **数值 IK 的发散**：初值不好可能收敛到错误解，或卡在局部极小值。常用策略：多次随机初值尝试。
+# 4. **位姿误差的表示**：当目标包含姿态时，位置误差和姿态误差需要正确组合。常用的 6 维误差：$\mathbf{e} = [\mathbf{p}_{des} - \mathbf{p}; \log(\mathbf{R}_{des}\mathbf{R}^T)]$。
+
+# %% [markdown]
+# ## 10. 工程应用
+#
+# - **拾取与放置**：视觉系统给出目标位姿 → IK 求解关节角 → 运动控制
+# - **轨迹规划**：每个路径点的位姿需要通过 IK 转为关节角（NB13）
+# - **冗余优化**：多解时选择满足次优准则的解（如避开关节限制、最小化力矩）
+
+# %% [markdown]
+# ## 11. 面试常见问题
+#
+# 详见 INTERVIEW_CHECKLIST.md #2.2-2.5
+
+# %% [markdown]
+# ## 12. 练习题
+#
+# ### 概念题
+# 1. 2R 臂的 IK 最多有几个解？无解的条件是什么？
+# 2. 阻尼最小二乘和伪逆的本质区别是什么？
+#
+# ### 手算题
+# 1. 用几何法求 2R 臂 ($l_1=1, l_2=0.8$) 在 $(x,y)=(1.2, 0.6)$ 处的两组 IK 解。
+#
+# ### 编程题
+# 1. 实现自适应阻尼的数值 IK（误差大→λ小，接近奇异→λ大）。
+# 2. 实现多次随机初值 + 选择最优解的 IK 框架。
+#
+# > 答案见 `solutions/06_solutions.ipynb`
+
+# %% [markdown]
+# ## 13. 本节总结
+#
+# | 方法 | 优点 | 缺点 | 适用 |
+# |------|------|------|------|
+# | 几何法 | 精确、快速 | 只适用于简单结构 | 2R/3R 平面臂 |
+# | 代数法 | 解析解、全局 | 推导复杂、依赖结构 | 满足 Pieper 准则的 6R 臂 |
+# | 数值法（伪逆） | 通用 | 奇异处爆炸 | 任何结构 |
+# | 数值法（DLS） | 奇异处稳定 | 收敛慢、需调 λ | 接近奇异的场景 |
+
+# %% [markdown]
+# ## 14. 与下一节的联系
+#
+# 本节大量使用雅可比矩阵 $\mathbf{J}$ 来进行数值 IK。下一节（NB07）将**深入雅可比的内在结构**——如何构造它、几何雅可比与解析雅可比的本质区别、以及如何用它映射速度和力。

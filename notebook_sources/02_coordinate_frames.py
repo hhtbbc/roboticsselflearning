@@ -1,0 +1,416 @@
+# ---
+# jupyter:
+#   jupytext:
+#     text_representation:
+#       extension: .py
+#       format_name: percent
+#       format_version: '1.3'
+#   kernelspec:
+#     display_name: Python (robotics-learning)
+#     language: python
+#     name: robotics-learning
+# ---
+
+# %% [markdown]
+# # Notebook 02：坐标系与刚体运动
+#
+# ## 1. 本节在知识体系中的位置
+#
+# ```
+# NB01 线性代数 ──→ NB02 坐标系与刚体运动 ──→ NB03 旋转表示 ──→ NB04 四元数
+#                       │
+#                       └──→ NB05 正运动学 (齐次变换的乘积)
+# ```
+#
+# 坐标系和齐次变换是机器人学中**最核心的空间概念**。一切运动学、动力学和控制都建立在对"一个物体在空间中如何定位和移动"的精确描述之上。
+
+# %% [markdown]
+# ## 2. 学习目标
+#
+# - ⭐ 理解参考系（reference frame）的本质：它是一组附着在物体上的坐标轴
+# - ⭐ 掌握旋转矩阵的定义、性质及 SO(3) 群的含义
+# - ⭐ 能够构造和求逆齐次变换矩阵（SE(3)）
+# - ⭐ 区分主动旋转（alibi）与被动旋转（alias）
+# - ⭐ 理解左乘和右乘的物理差异
+# - 📖 理解变换的方向性（A→B vs B→A）
+
+# %% [markdown]
+# ## 3. 前置知识
+#
+# - NB01：向量/矩阵运算、矩阵逆、正交矩阵
+# - 基本的空间几何直觉
+
+# %% [markdown]
+# ## 4. 参考系与坐标系的定义
+#
+# ### 4.1 参考系（Reference Frame）vs 坐标系（Coordinate System）
+#
+# 在机器人学中，这两个概念需要严格区分：
+#
+# - **参考系**：由**原点**和三个**正交单位轴**构成的完整空间基准。一个参考系 $\{A\}$ 由 $(\mathbf{o}_A, \hat{\mathbf{x}}_A, \hat{\mathbf{y}}_A, \hat{\mathbf{z}}_A)$ 定义。
+# - **坐标系**：参考系中用来给向量赋值的数字系统。向量在参考系 $\{A\}$ 中的**坐标**就是一个数字元组。
+#
+# 关键区别：**向量本身**是几何实体，不依赖于参考系；但向量的**坐标表示**依赖于参考系。
+#
+# 符号约定：${}^{A}\mathbf{v}$ 表示向量 $\mathbf{v}$ 在参考系 $\{A\}$ 中的坐标。
+
+# %% [markdown]
+# ### 4.2 为什么需要多个参考系？
+#
+# 机器人系统中同时存在多个参考系：
+#
+# ```
+# {world} → {base} → {link_1} → {link_2} → ... → {link_n} → {tool}
+# ```
+#
+# - **世界系 {world}**：固定的全局参考
+# - **基座系 {base}**：机器人安装位置
+# - **连杆系 {link_i}**：每个连杆自身
+# - **工具系 {tool}**：末端执行器 / 手爪
+# - **传感器系 {camera}、{lidar}**：传感器的自身参考系
+#
+# 每个参考系之间的变换是机器人所有计算的基础。
+
+# %% [markdown]
+# ## 5. 旋转矩阵（Rotation Matrix）
+#
+# ### 5.1 定义
+#
+# 旋转矩阵 $\mathbf{R} \in \mathbb{R}^{3\times 3}$ 描述一个参考系相对于另一个参考系的**方向**（orientation）。
+#
+# ${}^{A}_{B}\mathbf{R}$ 的三个列向量是参考系 $\{B\}$ 的三个单位轴在参考系 $\{A\}$ 中的坐标：
+#
+# $${}^{A}_{B}\mathbf{R} = \begin{bmatrix}
+# | & | & | \\
+# {}^{A}\hat{\mathbf{x}}_B & {}^{A}\hat{\mathbf{y}}_B & {}^{A}\hat{\mathbf{z}}_B \\
+# | & | & |
+# \end{bmatrix} = \begin{bmatrix}
+# r_{11} & r_{12} & r_{13} \\
+# r_{21} & r_{22} & r_{23} \\
+# r_{31} & r_{32} & r_{33}
+# \end{bmatrix}$$
+#
+# 通俗理解：${}^{A}_{B}\mathbf{R}$ 的每一列回答了 _"B 系的 X/Y/Z 轴在 A 系中看是什么方向？"_
+
+# %% [markdown]
+# ### 5.2 SO(3) 群性质
+#
+# 所有旋转矩阵构成**三维特殊正交群 SO(3)**：
+#
+# $$SO(3) = \{\mathbf{R} \in \mathbb{R}^{3\times 3} \mid \mathbf{R}^T\mathbf{R} = \mathbf{I}, \det(\mathbf{R}) = 1\}$$
+#
+# 性质 1（正交性）：$\mathbf{R}^T\mathbf{R} = \mathbf{I}$，即 $\mathbf{R}^{-1} = \mathbf{R}^T$。
+# 这意味着旋转矩阵的**列向量是标准正交的**：
+# - $\hat{\mathbf{x}} \cdot \hat{\mathbf{y}} = 0$（正交）
+# - $\|\hat{\mathbf{x}}\| = \|\hat{\mathbf{y}}\| = \|\hat{\mathbf{z}}\| = 1$（单位长度）
+#
+# 性质 2（方向保持）：$\det(\mathbf{R}) = +1$（右手系保持右手系）
+#
+# 性质 3（自由度）：SO(3) 只有 3 个自由度（尽管 $\mathbf{R}$ 有 9 个元素，但 6 个正交约束条件使其有效维度为 3）。
+
+# %% [markdown]
+# ### 5.3 基本旋转矩阵
+#
+# 绕各轴旋转 $\theta$ 弧度：
+#
+# $$\mathbf{R}_x(\theta) = \begin{bmatrix} 1 & 0 & 0 \\ 0 & \cos\theta & -\sin\theta \\ 0 & \sin\theta & \cos\theta \end{bmatrix}$$
+#
+# $$\mathbf{R}_y(\theta) = \begin{bmatrix} \cos\theta & 0 & \sin\theta \\ 0 & 1 & 0 \\ -\sin\theta & 0 & \cos\theta \end{bmatrix}$$
+#
+# $$\mathbf{R}_z(\theta) = \begin{bmatrix} \cos\theta & -\sin\theta & 0 \\ \sin\theta & \cos\theta & 0 \\ 0 & 0 & 1 \end{bmatrix}$$
+#
+# 注意：$\mathbf{R}_y$ 的 $-\sin\theta$ 在上面（与 X、Z 不同），这是为了保持右手定则。
+
+# %% [markdown]
+# ### 5.4 用旋转矩阵变换向量
+#
+# 如果 ${}^{A}_{B}\mathbf{R}$ 已知，则向量 $\mathbf{v}$ 在 $\{B\}$ 中的坐标可以通过左乘旋转矩阵变换到 $\{A\}$：
+#
+# $${}^{A}\mathbf{v} = {}^{A}_{B}\mathbf{R} \; {}^{B}\mathbf{v}$$
+#
+# 这个公式是机器人学中**最重要、最高频使用的公式之一**。
+
+# %% [markdown]
+# ## 6. 齐次变换矩阵（Homogeneous Transformation）
+#
+# ### 6.1 为什么需要齐次变换？
+#
+# 刚体运动 = 旋转 + 平移。分开处理需要两步：
+# $${}^{A}\mathbf{p} = {}^{A}_{B}\mathbf{R} \; {}^{B}\mathbf{p} + {}^{A}\mathbf{p}_{B\_origin}$$
+#
+# 用齐次变换矩阵 $\mathbf{T} \in SE(3)$ 一次性表示：
+#
+# $${}^{A}_{B}\mathbf{T} = \begin{bmatrix}
+# {}^{A}_{B}\mathbf{R} & {}^{A}\mathbf{p}_{B} \\
+# \mathbf{0}^T & 1
+# \end{bmatrix} \in \mathbb{R}^{4\times 4}$$
+#
+# 用 4 维齐次坐标 $\tilde{\mathbf{p}} = [\mathbf{p}^T, 1]^T$：
+# $${}^{A}\tilde{\mathbf{p}} = {}^{A}_{B}\mathbf{T} \; {}^{B}\tilde{\mathbf{p}}$$
+
+# %% [markdown]
+# ### 6.2 SE(3) 群性质
+#
+# 所有齐次变换矩阵构成**三维特殊欧几里得群 SE(3)**。
+#
+# 逆变换公式（比 4×4 求逆快得多）：
+#
+# $${}^{A}_{B}\mathbf{T}^{-1} = {}^{B}_{A}\mathbf{T} = \begin{bmatrix}
+# {}^{A}_{B}\mathbf{R}^T & -{}^{A}_{B}\mathbf{R}^T \; {}^{A}\mathbf{p}_{B} \\
+# \mathbf{0}^T & 1
+# \end{bmatrix}$$
+#
+# 这个公式非常重要——在 DH 参数和运动学计算中反复使用。
+
+# %% [markdown]
+# ## 7. 变换的复合：左乘 vs 右乘
+#
+# ### 7.1 相对于固定参考系的变换（左乘）
+#
+# 如果先旋转变换 $\mathbf{T}_1$，再施以变换 $\mathbf{T}_2$（两者都表达在同一个固定参考系中）：
+#
+# $$\mathbf{T} = \mathbf{T}_2 \mathbf{T}_1$$
+#
+# **左乘**表示相对于固定（世界）参考系施加的变换。
+#
+# ### 7.2 相对于当前参考系的变换（右乘）
+#
+# 如果先做 $\mathbf{T}_1$，然后在 $\mathbf{T}_1$ 的结果参考系中做 $\mathbf{T}_2$：
+#
+# $$\mathbf{T} = \mathbf{T}_1 \mathbf{T}_2$$
+#
+# **右乘**表示相对于当前（局部）参考系施加的变换。
+#
+# ### 7.3 这是面试高频考点！
+#
+# - 左乘 = post-multiply = 在固定系中做的变换
+# - 右乘 = pre-multiply = 在当前系中做的变换
+#
+# 在正运动学中：$\mathbf{T}_n^0 = \mathbf{T}_1^0 \mathbf{T}_2^1 \cdots \mathbf{T}_n^{n-1}$
+# 这是**右乘链**——每个 DH 变换都是相对于上一个坐标系施加的。
+
+# %% [markdown]
+# ## 8. 主动旋转 vs 被动旋转
+#
+# | | 主动旋转 (Alibi) | 被动旋转 (Alias) |
+# |---|---|---|
+# | 做什么 | 移动点/物体本身 | 换一个参考系来观察同一点 |
+# | 公式 | $\mathbf{p}' = \mathbf{R} \mathbf{p}$ | ${}^{B}\mathbf{p} = \mathbf{R}^{-1} {}^{A}\mathbf{p} = \mathbf{R}^T {}^{A}\mathbf{p}$ |
+# | 不变什么 | 参考系固定 | 空间中的点固定 |
+# | 机器人学上下文 | 机器人末端在空间中转动 | 同一个物理向量从世界系变换到工具系 |
+#
+# 对于旋转矩阵：**被动旋转矩阵 = 主动旋转矩阵的转置（逆）**。
+# 这解释了为什么 ${}^{A}_{B}\mathbf{R}^T = {}^{B}_{A}\mathbf{R}$。
+
+# %% [markdown]
+# ## 9. Python 实现与可视化
+
+# %%
+import numpy as np
+import matplotlib.pyplot as plt
+from mpl_toolkits.mplot3d import Axes3D
+import sys
+sys.path.insert(0, '..')
+from src.robotics_learning.transforms import (
+    rot_x, rot_y, rot_z, is_valid_rotation,
+    homogenous_transform, inv_homogenous, transform_point
+)
+%matplotlib inline
+print("✅ 导入完成")
+
+# %% [markdown]
+# ### 9.1 基本旋转矩阵
+
+# %%
+theta = np.pi / 4  # 45度
+
+Rx = rot_x(theta)
+Ry = rot_y(theta)
+Rz = rot_z(theta)
+
+print(f"R_x({theta:.3f}):\n{np.round(Rx, 4)}\n")
+print(f"R_y({theta:.3f}):\n{np.round(Ry, 4)}\n")
+print(f"R_z({theta:.3f}):\n{np.round(Rz, 4)}")
+
+# 验证 SO(3) 性质
+for i, (name, R) in enumerate([('Rx', Rx), ('Ry', Ry), ('Rz', Rz)]):
+    valid = is_valid_rotation(R)
+    print(f"{name}: R^T R = I? {np.allclose(R.T @ R, np.eye(3))}, det={np.linalg.det(R):.4f}, valid={valid}")
+
+# %% [markdown]
+# ### 9.2 用旋转矩阵变换向量
+
+# %%
+# {B} 中一个点
+p_B = np.array([1.0, 0.5, 0.0])
+print(f"p_B = {p_B}")
+
+# {B} 相对于 {A} 旋转了 30° 绕 Z 轴
+R_AB = rot_z(np.pi/6)
+p_A = R_AB @ p_B
+print(f"p_A = R_AB @ p_B = {np.round(p_A, 4)}")
+
+# 验证：旋转变换保持向量长度
+print(f"||p_B|| = {np.linalg.norm(p_B):.4f}, ||p_A|| = {np.linalg.norm(p_A):.4f}")
+print(f"长度不变? {np.allclose(np.linalg.norm(p_A), np.linalg.norm(p_B))}")
+
+# %% [markdown]
+# ### 9.3 齐次变换矩阵
+
+# %%
+# 构造齐次变换：{B} 在 {A} 中绕 Z 转 30°，并向 X 方向平移 2
+T_AB = homogenous_transform(rot_z(np.pi/6), np.array([2.0, 1.0, 0.0]))
+print(f"T_AB:\n{np.round(T_AB, 4)}")
+
+# 求逆
+T_BA = inv_homogenous(T_AB)
+print(f"\nT_BA = inv(T_AB):\n{np.round(T_BA, 4)}")
+
+# 验证：T_BA @ T_AB = I
+print(f"\nT_BA @ T_AB = I? {np.allclose(T_BA @ T_AB, np.eye(4), atol=1e-10)}")
+
+# %% [markdown]
+# ### 9.4 可视化坐标系
+
+# %%
+def draw_frame_3d(ax, T, label='', scale=1.0, alpha=1.0):
+    """在 3D 轴中绘制坐标系：RGB = XYZ"""
+    origin = T[:3, 3]
+    R = T[:3, :3]
+    colors = ['r', 'g', 'b']
+    ax_labels = ['X', 'Y', 'Z']
+    for i, (color, al) in enumerate(zip(colors, ax_labels)):
+        ax.quiver(origin[0], origin[1], origin[2],
+                  R[0, i]*scale, R[1, i]*scale, R[2, i]*scale,
+                  color=color, alpha=alpha, linewidth=2, arrow_length_ratio=0.15)
+        tip = origin + R[:, i] * scale * 1.2
+        ax.text(tip[0], tip[1], tip[2], f'{al}{label}', color=color, fontsize=10)
+    if label:
+        ax.text(origin[0], origin[1], origin[2], f'{{{label}}}', fontsize=11, fontweight='bold')
+
+fig = plt.figure(figsize=(10, 8))
+ax = fig.add_subplot(111, projection='3d')
+
+# {A} (世界系) — 不动
+T_A = np.eye(4)
+draw_frame_3d(ax, T_A, 'A', scale=1.5, alpha=0.6)
+
+# {B} — 绕 Z 转 45°，再平移
+T_B = homogenous_transform(rot_z(np.pi/4), np.array([2.0, 1.5, 0.5]))
+draw_frame_3d(ax, T_B, 'B', scale=1.2, alpha=1.0)
+
+# {C} — 由 {B} 再绕 X 转 30°，再平移
+T_C = T_B @ homogenous_transform(rot_x(np.pi/6), np.array([1.0, 0.0, 0.5]))
+draw_frame_3d(ax, T_C, 'C', scale=0.9, alpha=0.8)
+
+# 画连接线
+p_B_origin = T_B[:3, 3]
+p_C_origin = T_C[:3, 3]
+ax.plot([0, p_B_origin[0]], [0, p_B_origin[1]], [0, p_B_origin[2]],
+        'k--', alpha=0.3)
+ax.plot([p_B_origin[0], p_C_origin[0]], [p_B_origin[1], p_C_origin[1]],
+        [p_B_origin[2], p_C_origin[2]], 'k--', alpha=0.3)
+
+ax.set_xlim([-1, 4]); ax.set_ylim([-1, 3]); ax.set_zlim([-1, 3])
+ax.set_xlabel('X'); ax.set_ylabel('Y'); ax.set_zlabel('Z')
+ax.set_title('参考系变换链: {A} → {B} → {C}')
+ax.set_box_aspect([1, 1, 1])
+ax.view_init(elev=25, azim=-45)
+plt.tight_layout()
+plt.savefig('../outputs/02_frame_chain.png', dpi=100, bbox_inches='tight')
+plt.show()
+
+# %% [markdown]
+# ### 9.5 左乘 vs 右乘对比演示
+
+# %%
+# 左乘（相对于固定系 {A}）：先绕 Z 转 45°，再绕（固定）Y 转 30°
+T_left = homogenous_transform(rot_y(np.pi/6), np.zeros(3)) @ homogenous_transform(rot_z(np.pi/4), np.zeros(3))
+
+# 右乘（相对于当前系）：先绕 Z 转 45°，再绕（新的自身）Y 转 30°
+T_right = homogenous_transform(rot_z(np.pi/4), np.zeros(3)) @ homogenous_transform(rot_y(np.pi/6), np.zeros(3))
+
+fig, axes = plt.subplots(1, 2, figsize=(14, 7), subplot_kw={'projection': '3d'})
+
+for ax, T, title in [
+    (axes[0], T_left, '左乘 (固定系): R_y(30°) · R_z(45°)'),
+    (axes[1], T_right, '右乘 (当前系): R_z(45°) · R_y(30°)')
+]:
+    draw_frame_3d(ax, np.eye(4), 'A', scale=1.2, alpha=0.4)
+    draw_frame_3d(ax, T, 'B', scale=1.0, alpha=1.0)
+    ax.set_xlim([-1.5, 1.5]); ax.set_ylim([-1.5, 1.5]); ax.set_zlim([-1, 2])
+    ax.set_xlabel('X'); ax.set_ylabel('Y'); ax.set_zlabel('Z')
+    ax.set_title(title)
+    ax.set_box_aspect([1, 1, 1])
+
+plt.tight_layout()
+plt.savefig('../outputs/02_left_vs_right_multiply.png', dpi=100, bbox_inches='tight')
+plt.show()
+
+print("注意两个结果是不同的！这就是左乘 vs 右乘的本质区别。")
+print(f"R_left = R_y(固定) @ R_z:  \n{np.round(T_left[:3,:3], 4)}\n")
+print(f"R_right = R_z @ R_y(新B系): \n{np.round(T_right[:3,:3], 4)}")
+
+# %% [markdown]
+# ## 10. 常见错误与易混淆概念
+#
+# 1. **变换方向**：${}^{A}_{B}\mathbf{T}$ 是"从 B 到 A 的变换"还是"B 在 A 中的位姿"？这两种理解都对，但使用时需要一致。关键记忆法：运算时下标消去规则——${}^{A}_{B}\mathbf{T} \cdot {}^{B}_{C}\mathbf{T} = {}^{A}_{C}\mathbf{T}$。
+#
+# 2. **左乘还是右乘**：很多人死记"左乘固定、右乘自身"但不理解为什么。本质：$\mathbf{T}_2 \mathbf{T}_1$ 中，$\mathbf{T}_1$ 的列向量在 $\mathbf{T}_2$ 的参考系中被解释——如果 $\mathbf{T}_2$ 表达在固定系，那就是相对固定系施加。
+#
+# 3. **逆变换的符号**：${}^{A}_{B}\mathbf{T}^{-1} \neq$ 简单地把 $\mathbf{R}$ 和 $\mathbf{p}$ 分别取逆。正确公式是 $\mathbf{R}^T$ 旋转回去，再用 $-\mathbf{R}^T\mathbf{p}$ 平移回去。
+#
+# 4. **SO(3) ≠ 任意 3×3 正交矩阵**：必须 $\det(\mathbf{R}) = +1$。如果 $\det(\mathbf{R}) = -1$（如反射），那不是旋转而是旋转+镜像，不在 SO(3) 中。
+
+# %% [markdown]
+# ## 11. 工程应用
+#
+# - **机器人标定（Calibration）**：测量基座→相机→工具的多重变换链
+# - **DH 参数建模**：每个 DH 变换就是一个 ${}^{i-1}_{i}\mathbf{T}$（NB05）
+# - **传感器融合**：tf 树（NB24）由一系列齐次变换组成
+# - **轨迹规划**：目标位姿用齐次变换 $\mathbf{T}_{des}$ 指定（NB06）
+
+# %% [markdown]
+# ## 12. 面试常见问题
+#
+# 1. **旋转矩阵的性质？如何验证一个矩阵是合法旋转矩阵？** → INTERVIEW_CHECKLIST #1.1
+# 2. **齐次变换矩阵的逆怎么求？** → #1.4
+# 3. **左乘和右乘的区别？** → #1.5
+
+# %% [markdown]
+# ## 13. 练习题
+
+# %% [markdown]
+# ### 概念题
+# 1. 为什么旋转矩阵只有 3 个自由度（尽管有 9 个元素）？
+# 2. ${}^{A}_{B}\mathbf{T}$ 的四个子块分别代表什么？
+#
+# ### 手算题
+# 1. 给定 ${}^{A}_{B}\mathbf{R}$ 为绕 X 轴旋转 90°，${}^{A}\mathbf{p}_B = [2, 0, 0]^T$。点 $\mathbf{p}$ 在 {B} 中为 $[0, 1, 0]^T$，求 ${}^{A}\mathbf{p}$。
+# 2. 用 DH 下标消去规则计算 ${}^{0}_{2}\mathbf{T}$，已知 ${}^{0}_{1}\mathbf{T}$ 和 ${}^{1}_{2}\mathbf{T}$。
+#
+# ### 编程题
+# 1. 实现函数验证 $\mathbf{R}$ 是 SO(3)（正交 + det=+1）。
+# 2. 绘制一个参考系绕多个轴连续旋转的动画。
+#
+# > 答案见 `solutions/02_solutions.ipynb`
+
+# %% [markdown]
+# ## 14. 本节总结
+#
+# | 概念 | 符号 | 性质 |
+# |------|------|------|
+# | 旋转矩阵 | $\mathbf{R} \in SO(3)$ | $\mathbf{R}^T\mathbf{R}=\mathbf{I}$, $\det(\mathbf{R})=+1$, 3 DOF |
+# | 齐次变换 | $\mathbf{T} \in SE(3)$ | 4×4，6 DOF（3 旋转 + 3 平移） |
+# | 逆变换 | $\mathbf{T}^{-1}$ | $\mathbf{R}^T$ 旋转回 + $-\mathbf{R}^T\mathbf{p}$ 平移回 |
+# | 左乘 | $\mathbf{T}_{new}\mathbf{T}_{old}$ | 相对固定系施加新变换 |
+# | 右乘 | $\mathbf{T}_{old}\mathbf{T}_{new}$ | 相对当前系施加新变换 |
+# | 被动旋转 | ${}^{B}\mathbf{p} = \mathbf{R}^T{}^{A}\mathbf{p}$ | 换参考系观察同一点 |
+
+# %% [markdown]
+# ## 15. 与下一节的联系
+#
+# 下一节（NB03）将深入探讨旋转的**多种数学表示**：
+# - 欧拉角（Euler Angles）— 最直观但有万向锁
+# - 轴角表示（Axis-Angle）— 和罗德里格斯公式
+# - 以及为什么需要不同的表示来应对不同的工程场景

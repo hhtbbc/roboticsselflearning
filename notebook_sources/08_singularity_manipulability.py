@@ -1,0 +1,279 @@
+# ---
+# jupyter:
+#   jupytext:
+#     text_representation:
+#       extension: .py
+#       format_name: percent
+#       format_version: '1.3'
+#   kernelspec:
+#     display_name: Python (robotics-learning)
+#     language: python
+#     name: robotics-learning
+# ---
+
+# %% [markdown]
+# # Notebook 08：奇异性分析与可操作度
+#
+# ## 1. 本节在知识体系中的位置
+#
+# ```
+# NB07 雅可比 ──→ NB08 奇异性 ──→ 影响所有依赖 J 的计算
+#                    │
+#                    ├──→ NB06 数值 IK (奇异时发散)
+#                    ├──→ NB19 操作空间控制 (奇异时不可控)
+#                    └──→ NB16 运动规划 (避奇异构型)
+# ```
+#
+# 雅可比 $\mathbf{J}(\mathbf{q})$ 的秩在某些构型下会退化——此时机器人"卡住"了某个方向的能力。
+
+# %% [markdown]
+# ## 2. 学习目标
+#
+# - ⭐ 理解奇异性的定义、分类和物理表现
+# - ⭐ 掌握可操作度（Yoshikawa manipulability）的计算和含义
+# - ⭐ 理解可操作度椭球的几何意义
+# - ⭐ 使用条件数 $\kappa(\mathbf{J})$ 量化接近奇异的程度
+# - 📖 力可操作度与速度可操作度的对偶
+
+# %% [markdown]
+# ## 3. 奇异性定义 ⭐
+
+# %% [markdown]
+# ### 3.1 数学定义
+#
+# $\mathbf{q}_s$ 是奇异构型（Singular Configuration），如果：
+# $$\text{rank}(\mathbf{J}(\mathbf{q}_s)) < \min(6, n)$$
+#
+# 等价地（当 $\mathbf{J}$ 是方阵时）：$\det(\mathbf{J}(\mathbf{q}_s)) = 0$
+
+# %% [markdown]
+# ### 3.2 物理表现
+#
+# 1. **某些方向的末端速度无法实现**：即使所有关节一起动，末端也产生不了某个方向的运动
+# 2. **有限的末端速度需要无穷大的关节速度**：$\dot{\mathbf{q}} = \mathbf{J}^{-1}\dot{\mathbf{x}}$，当 $\mathbf{J}$ 接近奇异时 $\dot{\mathbf{q}}$ 爆炸
+# 3. **有限的关节力矩可以抵抗任意大的末端力**：$\mathbf{F} = (\mathbf{J}^T)^{-1}\boldsymbol{\tau}$，在奇异方向 ${}^\perp$ 上 $\mathbf{F}$ 趋近 0
+# 4. **IK 有多解或解不连续**：穿过奇异性时解的分支发生变化
+
+# %% [markdown]
+# ### 3.3 奇异性的三种类型
+#
+# 1. **边界奇异性（Boundary Singularity）**：机械臂完全伸展时发生。末端在可达空间边界——无法沿径向向外运动。
+#    - 2R 臂：$q_2 = 0$° 或 $180$°（完全折叠或完全伸展）
+# 2. **内部奇异性（Internal Singularity）**：工作空间内部发生。两个关节轴共线。
+#    - 2R 臂在 $|l_1-l_2| < r < l_1+l_2$ 区域无内部奇异性
+#    - 3R+ 臂有更复杂的内部奇异性
+# 3. **腕部奇异性（Wrist Singularity）**：腕部三个关节的轴共面时发生（如 PUMA 560 的 $q_5=0$）
+
+# %% [markdown]
+# ## 4. 可操作度 ⭐
+
+# %% [markdown]
+# ### 4.1 Yoshikawa 可操作度
+#
+# $$\mu(\mathbf{q}) = \sqrt{\det(\mathbf{J}(\mathbf{q})\mathbf{J}^T(\mathbf{q}))} = \sigma_1 \sigma_2 \cdots \sigma_m$$
+#
+# 其中 $\sigma_i$ 是 $\mathbf{J}$ 的奇异值。
+#
+# 几何解释：$\mu$ 正比于可操作度椭球的体积（在 $\mathbb{R}^6$ 中）。$\mu$ 越大 → 各方向上的运动能力越均衡。
+
+# %% [markdown]
+# ### 4.2 可操作度椭球
+#
+# 在关节速度满足 $\|\dot{\mathbf{q}}\| \leq 1$ 的约束下，末端可实现的速度集合：
+# $$\{\dot{\mathbf{x}} = \mathbf{J}\dot{\mathbf{q}} \mid \|\dot{\mathbf{q}}\|^2 \leq 1\}$$
+#
+# 这是一个椭球（在 6 维空间中），满足：
+# $$\dot{\mathbf{x}}^T (\mathbf{J}\mathbf{J}^T)^{-1} \dot{\mathbf{x}} \leq 1$$
+#
+# 椭球主轴方向 = $\mathbf{U}$ 的列（$\mathbf{J}\mathbf{J}^T$ 的特征向量）
+# 椭球半轴长度 = $\sigma_i$（$\mathbf{J}$ 的奇异值）
+
+# %% [markdown]
+# ### 4.3 条件数
+#
+# $$\kappa(\mathbf{J}) = \frac{\sigma_{\max}}{\sigma_{\min}}$$
+#
+# - $\kappa = 1$：各向同性（isotropic）——所有方向运动能力相同
+# - $\kappa \to \infty$：接近奇异——某一方向几乎不能动
+# - $\kappa$ 对尺度不敏感，比 $\det(\mathbf{J})$ 更适合奇异预警
+
+# %% [markdown]
+# ## 5. Python 实现与可视化
+
+# %%
+import numpy as np
+import matplotlib.pyplot as plt
+import sys
+sys.path.insert(0, '..')
+from src.robotics_learning.kinematics import compute_geometric_jacobian
+%matplotlib inline
+print("✅ 导入完成")
+
+# %% [markdown]
+# ### 5.1 2R 臂可操作度分布
+
+# %%
+l1, l2 = 1.0, 0.8
+dh_2r = np.array([[l1, 0, 0], [l2, 0, 0]])
+
+n_grid = 100
+q1_grid = np.linspace(-np.pi, np.pi, n_grid)
+q2_grid = np.linspace(-np.pi, np.pi, n_grid)
+Q1, Q2 = np.meshgrid(q1_grid, q2_grid)
+
+mu_grid = np.zeros_like(Q1)
+kappa_grid = np.zeros_like(Q1)
+
+for i in range(n_grid):
+    for j in range(n_grid):
+        q = np.array([Q1[i, j], Q2[i, j]])
+        J = compute_geometric_jacobian(dh_2r, q)[:2, :]
+        s = np.linalg.svd(J, compute_uv=False)
+        mu_grid[i, j] = s[0] * s[1]
+        kappa_grid[i, j] = s[0] / (s[1] + 1e-10)
+
+fig, axes = plt.subplots(1, 2, figsize=(16, 6))
+
+# 可操作度
+c1 = axes[0].contourf(np.degrees(Q1), np.degrees(Q2), mu_grid, levels=20, cmap='viridis')
+axes[0].set_xlabel('q₁ (°)'); axes[0].set_ylabel('q₂ (°)')
+axes[0].set_title('Manipulability μ(q) = σ₁·σ₂')
+plt.colorbar(c1, ax=axes[0])
+
+# 条件数（对数）
+c2 = axes[1].contourf(np.degrees(Q1), np.degrees(Q2), np.log10(kappa_grid), levels=20, cmap='RdYlBu_r')
+axes[1].set_xlabel('q₁ (°)'); axes[1].set_ylabel('q₂ (°)')
+axes[1].set_title('Condition Number log₁₀(κ(J))')
+plt.colorbar(c2, ax=axes[1])
+
+# 标记奇异性区域
+for ax in axes:
+    ax.axhline(y=0, color='red', linestyle='--', alpha=0.4, label='q₂=0° (boundary singular)')
+    ax.axhline(y=180, color='red', linestyle='--', alpha=0.4, label='q₂=±180° (boundary singular)')
+    ax.axhline(y=-180, color='red', linestyle='--', alpha=0.4)
+    ax.legend(fontsize=7)
+
+plt.tight_layout()
+plt.savefig('../outputs/08_manipulability_2r.png', dpi=100, bbox_inches='tight')
+plt.show()
+
+print("关键观察：")
+print("- q₂ ≈ 0° 或 ±180° 时 μ → 0（边界奇异——臂完全伸展/折叠）")
+print("- 条件数在奇异附近爆炸（κ → ∞）")
+print("- q₂ ≈ ±90° 时 μ 最大（最佳运动灵活性）")
+
+# %% [markdown]
+# ### 5.2 可操作度椭球在工作空间中的分布
+
+# %%
+# 在工作空间中选几个代表性构型画椭球
+test_q2 = [np.pi/6, np.pi/2, np.pi]
+
+fig, ax = plt.subplots(figsize=(10, 10))
+theta_c = np.linspace(0, 2*np.pi, 200)
+ax.plot((l1+l2)*np.cos(theta_c), (l1+l2)*np.sin(theta_c), 'k-', alpha=0.4, label='Workspace boundary')
+ax.plot(abs(l1-l2)*np.cos(theta_c), abs(l1-l2)*np.sin(theta_c), 'k--', alpha=0.3)
+
+colors = ['blue', 'green', 'red']
+for idx, q2_ref in enumerate(test_q2):
+    for q1_ref in [np.pi/6, np.pi/3]:
+        q = np.array([q1_ref, q2_ref])
+        dh_full = np.column_stack([dh_2r, q])
+        from src.robotics_learning.kinematics import forward_kinematics
+        T_end, _ = forward_kinematics(dh_full)
+        p_end = T_end[:2, 3]
+
+        J = compute_geometric_jacobian(dh_2r, q)[:2, :]
+        U, s, Vt = np.linalg.svd(J @ J.T)
+        ell = plt.matplotlib.patches.Ellipse(
+            p_end, 2*np.sqrt(s[0])*0.15, 2*np.sqrt(s[1])*0.15,
+            angle=np.degrees(np.arctan2(U[1, 0], U[0, 0])),
+            facecolor=colors[idx], alpha=0.2, edgecolor=colors[idx], linewidth=1.5
+        )
+        ax.add_patch(ell)
+        ax.plot(p_end[0], p_end[1], 'o', color=colors[idx], markersize=6)
+        ax.annotate(f'q₂={np.degrees(q2_ref):.0f}°', (p_end[0]+0.05, p_end[1]+0.05), fontsize=8)
+
+ax.set_xlim([-2, 2]); ax.set_ylim([-2, 2])
+ax.set_xlabel('X (m)'); ax.set_ylabel('Y (m)')
+ax.set_title('Manipulability Ellipsoids at Different Configurations')
+ax.set_aspect('equal'); ax.legend(); ax.grid(True, alpha=0.3)
+plt.tight_layout()
+plt.savefig('../outputs/08_workspace_ellipsoids.png', dpi=100, bbox_inches='tight')
+plt.show()
+
+# %% [markdown]
+# ### 5.3 接近奇异时的关节速度爆炸
+
+# %%
+# 演示雅可比条件数恶化时末端误差放大
+dh_test = np.array([[1.0, 0, 0], [0.8, 0, 0]])
+q2_vals = np.linspace(0.02, np.pi, 50)  # q₂ 从接近 0 到 π
+kappa_vals = []
+dq_magnitude = []
+
+dx = np.array([0.01, 0.0])  # 固定末端速度指令
+
+for q2 in q2_vals:
+    q = np.array([np.pi/4, q2])
+    J = compute_geometric_jacobian(dh_test, q)[:2, :]
+    s = np.linalg.svd(J, compute_uv=False)
+    kappa_vals.append(s[0] / (s[1] + 1e-12))
+    dq_magnitude.append(np.linalg.norm(np.linalg.pinv(J) @ dx))
+
+fig, ax1 = plt.subplots(figsize=(10, 6))
+ax2 = ax1.twinx()
+
+ax1.semilogy(np.degrees(q2_vals), kappa_vals, 'b-', linewidth=2, label=r'$\kappa$(J)')
+ax2.semilogy(np.degrees(q2_vals), dq_magnitude, 'r--', linewidth=2, label=r'$\|\Delta q\|$')
+
+ax1.set_xlabel('q₂ (°)'); ax1.set_ylabel(r'Condition Number $\kappa$(J)', color='b')
+ax2.set_ylabel(r'$\|\Delta q\|$ for fixed $\dot{x}$', color='r')
+ax1.set_title('Singularity: Joint Velocity Explosion near q₂ ≈ 0°')
+ax1.legend(loc='upper left'); ax2.legend(loc='lower right')
+ax1.grid(True, alpha=0.3)
+plt.tight_layout()
+plt.savefig('../outputs/08_singularity_explosion.png', dpi=100, bbox_inches='tight')
+plt.show()
+
+# %% [markdown]
+# ## 6. 常见错误与易混淆概念
+#
+# 1. **det(J) vs rank(J)**：对于非方雅可比，用 $\text{rank}(\mathbf{J})$ 而非 $\det$ 判断奇异性。
+# 2. **可操作度不统一**：$\mu$ 依赖于雅可比的尺度（如不同关节用不同单位）。使用时需注意归一化。
+# 3. **奇异性不是非黑即白的**：在实际中很少碰到精确 $\det(J)=0$。更实用的是条件数 $\kappa$ 或最小奇异值 $\sigma_{\min}$ 作为"奇异预警指标"。
+
+# %% [markdown]
+# ## 7. 工程应用
+#
+# - **工业机器人限制工作区**：通过软件限制关节角避开奇异区
+# - **冗余机器人利用零空间**：$\dot{\mathbf{q}} = \mathbf{J}^+\dot{\mathbf{x}} + (\mathbf{I}-\mathbf{J}^+\mathbf{J})\dot{\mathbf{q}}_0$ 在不影响末端位置的情况下优化可操作度
+# - **奇异鲁棒逆**：阻尼最小二乘 NW06 已讨论
+
+# %% [markdown]
+# ## 8. 练习题
+#
+# ### 概念题
+# 1. 2R 臂的奇异性发生在什么构型？
+# 2. 为什么可操作度椭球的主轴方向与 $\mathbf{J}\mathbf{J}^T$ 的特征向量方向一致？
+#
+# ### 编程题
+# 1. 实现函数检测 2R 臂在给定路径上是否会穿过奇异区。
+# 2. 用零空间投影优化沿路径的可操作度。
+#
+# > 答案见 `solutions/08_solutions.ipynb`
+
+# %% [markdown]
+# ## 9. 本节总结
+#
+# | 概念 | 定义 | 用途 |
+# |------|------|------|
+# | 奇异性 | $\text{rank}(\mathbf{J}) < \min(6,n)$ | 避免规划/控制中的奇异构型 |
+# | 可操作度 | $\mu = \sqrt{\det(\mathbf{J}\mathbf{J}^T)}$ | 量化整体 dexterity |
+# | 条件数 | $\kappa = \sigma_{\max}/\sigma_{\min}$ | 奇异预警（离奇异的"距离"） |
+# | 可操作度椭球 | $\dot{\mathbf{x}}^T(\mathbf{J}\mathbf{J}^T)^{-1}\dot{\mathbf{x}} \leq 1$ | 可视化各方向的运动能力 |
+
+# %% [markdown]
+# ## 10. 与下一节的联系
+#
+# NB09-10 进入**动力学**——在运动学和雅可比之后，我们将加入力和质量，建立机械臂的完整动力学方程 $\mathbf{M}(\mathbf{q})\ddot{\mathbf{q}} + \mathbf{C}(\mathbf{q},\dot{\mathbf{q}})\dot{\mathbf{q}} + \mathbf{g}(\mathbf{q}) = \boldsymbol{\tau}$。

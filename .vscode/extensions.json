@@ -1,0 +1,9 @@
+{
+    "recommendations": [
+        "ms-python.python",
+        "ms-toolsai.jupyter",
+        "hediet.vscode-drawio",
+        "bierner.markdown-mermaid",
+        "yzhang.markdown-all-in-one"
+    ]
+}

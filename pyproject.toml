@@ -1,0 +1,22 @@
+[project]
+name = "roboticsselflearning"
+version = "1.0.0"
+description = "机器人学系统学习教程 - 从零基础到工程实战"
+requires-python = ">=3.12"
+dependencies = [
+    "numpy",
+    "scipy",
+    "sympy",
+    "matplotlib",
+    "plotly",
+    "ipywidgets",
+    "pandas",
+    "jupyter",
+    "ipykernel",
+    "jupytext",
+    "nbformat",
+    "networkx",
+]
+
+[dependency-groups]
+dev = []
