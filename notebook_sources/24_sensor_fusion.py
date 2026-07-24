@@ -112,8 +112,8 @@ Q_f = np.diag([1e-6, 0.01])  # 过程噪声
 # 传感器
 C_enc = np.array([[1, 0]])    # 编码器测角度
 R_enc = np.array([[0.001]])   # 编码器噪声(小)
-C_acc = np.array([[0, 1]])    # 加速度计(简化：测角加速度→角速度)
-R_acc = np.array([[0.5]])     # IMU 噪声(大)
+C_gyro = np.array([[0, 1]])    # 陀螺仪：直接测量角速度
+R_gyro = np.array([[0.5]])     # 陀螺仪噪声
 
 # 真实轨迹
 true_q = np.zeros(N_f); true_qd = np.zeros(N_f)
@@ -137,7 +137,7 @@ for t in range(1, N_f):
     if t % 2 == 0:
         z_imu = true_qd[t] + rng.normal(0, np.sqrt(0.5))
         # 临时切换到 IMU 观测矩阵
-        kf_f_tmp = KalmanFilter(A_f, np.zeros((2,1)), C_acc, Q_f, R_acc,
+        kf_f_tmp = KalmanFilter(A_f, np.zeros((2,1)), C_gyro, Q_f, R_gyro,
                                 mu=kf_f.mu, Sigma=kf_f.Sigma)
         kf_f_tmp.update(np.array([z_imu]))
         kf_f.mu, kf_f.Sigma = kf_f_tmp.mu, kf_f_tmp.Sigma
@@ -174,9 +174,9 @@ O_enc_only = C_enc
 for k in range(1, 2):
     O_enc_only = np.vstack([O_enc_only, C_enc @ np.linalg.matrix_power(A_f, k)])
 
-O_both = np.vstack([C_enc, C_acc])
+O_both = np.vstack([C_enc, C_gyro])
 for k in range(1, 2):
-    O_both = np.vstack([O_both, C_enc @ np.linalg.matrix_power(A_f, k), C_acc @ np.linalg.matrix_power(A_f, k)])
+    O_both = np.vstack([O_both, C_enc @ np.linalg.matrix_power(A_f, k), C_gyro @ np.linalg.matrix_power(A_f, k)])
 
 print(f"仅编码器: rank(O) = {np.linalg.matrix_rank(O_enc_only)} (需要 = 2 才完全可观测)")
 print(f"编码器+IMU: rank(O) = {np.linalg.matrix_rank(O_both)} (应 = 2)")

@@ -18,25 +18,39 @@ from .transforms import rot_x, rot_z, homogenous_transform
 # =============================================================================
 
 def dh_transform(a: float, alpha: float, d: float, theta: float,
-                 convention: str = 'standard') -> np.ndarray:
+                 convention: str = 'sdh') -> np.ndarray:
     """
     单连杆 DH 变换矩阵
 
-    标准 DH（Craig 约定）: T_i = Rot_{z,θ_i} Trans_{z,d_i} Trans_{x,a_i} Rot_{x,α_i}
-    改进 DH:                T_i = Rot_{x,α_{i-1}} Trans_{x,a_{i-1}} Rot_{z,θ_i} Trans_{z,d_i}
+    支持两种 DH 约定：
+
+    SDH (Standard DH):
+        T_i = R_z(θ_i) · T_z(d_i) · T_x(a_i) · R_x(α_i)
+        参数下标均为 i。
+        这是 Spong/Vidyasagar 等教材使用的约定。
+
+    MDH (Modified DH / Khalil-Kleinfinger):
+        T_i = R_x(α_{i-1}) · T_x(a_{i-1}) · R_z(θ_i) · T_z(d_i)
+        参数下标: a_{i-1}, α_{i-1}, d_i, θ_i。
+        这是 Craig 教材实际使用的约定（Craig 称之为 Modified DH），
+        也是 URDF 的标准。
+
+    注意：不同的教材可能对"标准 DH"和"改进 DH"使用不同的名称。
+    本课程以矩阵乘法顺序为准，不使用模糊的"经典DH"等命名。
 
     参数:
-        a: 连杆长度 (link length)
-        alpha: 连杆扭转角 (link twist)
-        d: 连杆偏置 (link offset)
-        theta: 关节角 (joint angle)
-        convention: 'standard' (标准DH/改进DH) 或 'modified' (经典DH/Craig)
+        a: 连杆长度 (link length) — SDH: a_i, MDH: a_{i-1}
+        alpha: 连杆扭转角 (link twist) — SDH: α_i, MDH: α_{i-1}
+        d: 连杆偏置 (link offset) — SDH: d_i, MDH: d_i
+        theta: 关节角 (joint angle) — SDH: θ_i, MDH: θ_i
+        convention: 'sdh' (Standard DH) 或 'mdh' (Modified DH)
     """
-    if convention == 'standard':
-        # 标准 DH: T = Rz(θ) Tz(d) Tx(a) Rx(α)
-        T_rz_tz = np.eye(4)
-        T_rz_tz[:3, :3] = rot_z(theta)
-        T_rz_tz[:3, 3] = [0, 0, d]
+    if convention == 'sdh':
+        # SDH: T = Rz(θ_i) Tz(d_i) Tx(a_i) Rx(α_i)
+        T = np.eye(4)
+        T[:3, :3] = rot_z(theta)
+        T[:3, 3] = [0, 0, d]
+        T_rz_tz = T
 
         T_tx = np.eye(4)
         T_tx[:3, 3] = [a, 0, 0]
@@ -45,26 +59,27 @@ def dh_transform(a: float, alpha: float, d: float, theta: float,
         T_rx[:3, :3] = rot_x(alpha)
 
         return T_rz_tz @ T_tx @ T_rx
-    else:
-        # 改进 DH（经典 DH / Craig）: T = Rx(α_{i-1}) Tx(a_{i-1}) Rz(θ_i) Tz(d_i)
+    elif convention == 'mdh':
+        # MDH: T = Rx(α_{i-1}) Tx(a_{i-1}) Rz(θ_i) Tz(d_i)
         T_rx = np.eye(4)
         T_rx[:3, :3] = rot_x(alpha)
 
         T_tx = np.eye(4)
         T_tx[:3, 3] = [a, 0, 0]
 
-        T_rz = rot_z(theta)
-        T_rz_h = np.eye(4)
-        T_rz_h[:3, :3] = T_rz
+        T_rz = np.eye(4)
+        T_rz[:3, :3] = rot_z(theta)
 
         T_tz = np.eye(4)
         T_tz[:3, 3] = [0, 0, d]
 
-        return T_rx @ T_tx @ T_rz_h @ T_tz
+        return T_rx @ T_tx @ T_rz @ T_tz
+    else:
+        raise ValueError(f"Unknown DH convention: '{convention}'. Use 'sdh' or 'mdh'.")
 
 
 def forward_kinematics(dh_table: np.ndarray,
-                       convention: str = 'standard') -> Tuple[np.ndarray, List[np.ndarray]]:
+                       convention: str = 'sdh') -> Tuple[np.ndarray, List[np.ndarray]]:
     """
     正运动学计算
 
@@ -145,37 +160,43 @@ def ik_numerical(dh_table: np.ndarray, T_des: np.ndarray,
     q = q_init.copy()
     n = len(q)
 
-    for _ in range(max_iter):
+    for iteration in range(max_iter):
         # 计算当前 FK
         T_curr, _ = forward_kinematics(
             np.column_stack([dh_table[:, :3], q])
         )
 
-        # 位姿误差
+        # 位姿误差 — 使用 SO(3) Log 提取姿态误差（对 180° 也能工作）
         p_err = T_des[:3, 3] - T_curr[:3, 3]
-        R_err = T_des[:3, :3] @ T_curr[:3, :3].T
-        omega_err = 0.5 * np.array([
-            R_err[2, 1] - R_err[1, 2],
-            R_err[0, 2] - R_err[2, 0],
-            R_err[1, 0] - R_err[0, 1]
-        ])
+        # 空间误差 (左误差): R_err = R_d * R_curr^T (在空间系中表达)
+        R_err_mat = T_des[:3, :3] @ T_curr[:3, :3].T
+        # SO(3) Logarithm: 提取旋转向量
+        from .transforms import so3_log
+        omega_err = so3_log(R_err_mat)  # 旋转向量 ∈ ℝ³
         error = np.concatenate([p_err, omega_err])
 
         if np.linalg.norm(error) < tol:
             return q
 
-        # 雅可比
+        # 几何雅可比 (Spatial Jacobian, twist = [v; ω])
         J = compute_geometric_jacobian(dh_table, q)
 
-        # 更新关节角
+        # 更新关节角（加权阻尼最小二乘）
+        n_joints = len(q)
         if damping > 0:
-            # 阻尼最小二乘 (DLS)
+            # DLS: Δq = J^T (J J^T + λ² I)^{-1} e
             JJT = J @ J.T
             delta_q = J.T @ np.linalg.solve(JJT + damping**2 * np.eye(6), error)
         else:
-            # 雅可比伪逆
+            # 伪逆
             J_pinv = np.linalg.pinv(J)
             delta_q = J_pinv @ error
+
+        # 最大单步关节增量限制
+        max_step = 0.5  # rad
+        step_norm = np.max(np.abs(delta_q))
+        if step_norm > max_step:
+            delta_q = delta_q * max_step / step_norm
 
         q = q + delta_q
 

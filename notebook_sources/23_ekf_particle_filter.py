@@ -137,25 +137,29 @@ ekf = ExtendedKalmanFilter(f_ekf, h_ekf, A_func, C_func, Q_ekf, R_ekf,
                            mu=np.array([1,1,np.pi/4]), Sigma=np.eye(3)*0.5)
 
 true_pose = np.zeros((N_ekf, 3)); true_pose[0] = [1,1,np.pi/4]
-mu_efk = np.zeros((N_ekf, 3)); mu_efk[0] = ekf.mu
 mu_efk = np.zeros((N_ekf, 3))
+Sigma_efk = np.zeros((N_ekf, 3, 3))  # 保存每个时刻的协方差
+mu_efk[0] = ekf.mu.copy()
+Sigma_efk[0] = ekf.Sigma.copy()
 
 for t in range(1, N_ekf):
     u = np.array([0.5, 0.1*np.sin(t*dt_ekf)])
     true_pose[t] = f_ekf(true_pose[t-1], u) + rng.multivariate_normal(np.zeros(3), Q_ekf)
     z_true = h_ekf(true_pose[t])
     z_noisy = z_true + rng.multivariate_normal(np.zeros(6), R_ekf)
-    mu_efk[t], _, _ = ekf.step(z_noisy, u)
-mu_efk[0] = ekf.mu
+    mu_efk[t], Sigma_t, _ = ekf.step(z_noisy, u)
+    Sigma_efk[t] = Sigma_t.copy()
 
 fig, ax = plt.subplots(figsize=(10, 9))
 ax.plot(true_pose[:,0], true_pose[:,1], 'k-', linewidth=2, label='True Trajectory')
 ax.plot(mu_efk[:,0], mu_efk[:,1], 'b--', linewidth=2, label='EKF Estimate')
 ax.scatter(landmarks[:,0], landmarks[:,1], c='red', s=100, marker='s', label='Landmarks')
-for i, (tx, te) in enumerate(zip(true_pose[::20], mu_efk[::20])):
-    cov_xy = ekf.Sigma[:2,:2]
+# 使用对应时刻的协方差画椭圆
+for i, t_idx in enumerate(range(0, N_ekf, 20)):
+    tx, te = true_pose[t_idx], mu_efk[t_idx]
+    cov_xy = Sigma_efk[t_idx, :2, :2]
     ev, evec = np.linalg.eigh(cov_xy)
-    ell = plt.matplotlib.patches.Ellipse(te[:2], 2*np.sqrt(ev[0]), 2*np.sqrt(ev[1]),
+    ell = plt.matplotlib.patches.Ellipse(te[:2], 2*np.sqrt(max(ev[0],1e-10)), 2*np.sqrt(max(ev[1],1e-10)),
            angle=np.degrees(np.arctan2(evec[1,0],evec[0,0])), facecolor='blue', alpha=0.08, edgecolor='blue', lw=0.5)
     ax.add_patch(ell)
 ax.set_xlabel('X (m)'); ax.set_ylabel('Y (m)')

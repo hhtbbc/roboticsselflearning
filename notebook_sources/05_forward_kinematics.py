@@ -33,7 +33,7 @@
 # - ⭐ 能区分标准 DH 和改进 DH 并正确使用
 # - ⭐ 能手动推导 2R、3R 平面臂和简单空间臂的 FK
 # - ⭐ 用 Python 实现通用 FK 函数
-# - 📖 理解 Craig 版本 DH 参数的约定差异
+# - 📖 理解 SDH 和 MDH 两种约定的差异
 # - 📚 了解 Product of Exponentials (PoE) 表示法
 
 # %% [markdown]
@@ -69,7 +69,7 @@
 # | 关节角 (Joint Angle) | $\theta_i$ | 绕 $Z_{i-1}$ 轴，$X_{i-1}$ 到 $X_i$ 的转角 | rad |
 
 # %% [markdown]
-# ### 5.2 标准 DH（Standard DH / Craig 约定）
+# ### 5.2 标准 DH（Standard DH / SDH）
 #
 # **坐标系附着规则**（标准 DH）：
 # 1. $Z_{i-1}$ 轴 = 关节 $i$ 的转轴（$\theta_i$ 的旋转轴）
@@ -183,7 +183,7 @@ print("✅ 导入完成")
 
 # %%
 a, alpha, d, theta = 1.0, np.pi/2, 0.5, np.pi/4
-T = dh_transform(a, alpha, d, theta, convention='standard')
+T = dh_transform(a, alpha, d, theta, convention='sdh')
 print(f"DH 变换 (a={a}, α={np.degrees(alpha):.0f}°, d={d}, θ={np.degrees(theta):.0f}°):")
 print(np.round(T, 4))
 
@@ -202,7 +202,7 @@ dh_2r = np.array([
     [0.8, 0.0, 0.0, np.pi/3],   # [a, α, d, θ=q₂]
 ])
 
-T_end, transforms = forward_kinematics(dh_2r, convention='standard')
+T_end, transforms = forward_kinematics(dh_2r, convention='sdh')
 print("末端位姿 T_end:")
 print(np.round(T_end, 4))
 print(f"\n末端位置: {np.round(T_end[:3, 3], 4)}")
@@ -345,8 +345,8 @@ dh_modified = np.array([
     [a1,  0.0, 0.0, np.pi/3],   # 第二个连杆: a₁=l₁
 ])
 
-T_std, _ = forward_kinematics(dh_standard, convention='standard')
-T_mod, _ = forward_kinematics(dh_modified, convention='modified')
+T_std, _ = forward_kinematics(dh_standard, convention='sdh')
+T_mod, _ = forward_kinematics(dh_modified, convention='mdh')
 
 print("标准 DH 末端位置:", np.round(T_std[:3, 3], 4))
 print("改进 DH 末端位置:", np.round(T_mod[:3, 3], 4))

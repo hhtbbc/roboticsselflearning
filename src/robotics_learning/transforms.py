@@ -108,14 +108,17 @@ def rot_to_euler_zyx(R: np.ndarray) -> Tuple[float, float, float]:
     """旋转矩阵 → ZYX 欧拉角（Tait-Bryan）"""
     # 处理万向锁附近的情况
     if np.abs(R[2, 0]) > 0.99999:
-        # Gimbal lock
+        # Gimbal lock: pitch = ±π/2, roll 和 yaw 耦合
+        # 令 yaw = 0，从矩阵元素恢复 roll
         yaw = 0.0
         if R[2, 0] < 0:
+            # pitch = +π/2: R[0,1] = sin(roll - yaw), R[0,2] = cos(roll - yaw)
             pitch = np.pi / 2
-            roll = np.arctan2(-R[0, 1], R[0, 2])
+            roll = np.arctan2(R[0, 1], R[0, 2])
         else:
+            # pitch = -π/2: R[0,1] = -sin(roll + yaw), R[0,2] = -cos(roll + yaw)
             pitch = -np.pi / 2
-            roll = np.arctan2(R[0, 1], -R[0, 2])
+            roll = np.arctan2(-R[0, 1], -R[0, 2])
     else:
         pitch = np.arcsin(-R[2, 0])
         roll = np.arctan2(R[2, 1], R[2, 2])
@@ -151,13 +154,15 @@ def rot_to_axis_angle(R: np.ndarray) -> Tuple[np.ndarray, float]:
     if np.abs(theta) < 1e-6:
         return np.array([1.0, 0.0, 0.0]), 0.0
     elif np.abs(theta - np.pi) < 1e-6:
-        # 180度旋转的特殊处理
-        k = np.array([
-            np.sqrt((R[0, 0] + 1) / 2),
-            np.sqrt((R[1, 1] + 1) / 2) * np.sign(R[0, 1]),
-            np.sqrt((R[2, 2] + 1) / 2) * np.sign(R[0, 2])
-        ])
-        return k / np.linalg.norm(k), theta
+        # 180度旋转的特殊处理: R + I = 2 k k^T (k 是旋转轴)
+        # 取 (R + I) 的任意非零列归一化
+        RpI = R + np.eye(3)
+        for col in range(3):
+            k = RpI[:, col]
+            if np.linalg.norm(k) > 1e-10:
+                return k / np.linalg.norm(k), theta
+        # 退化情况：R = I
+        return np.array([1.0, 0.0, 0.0]), 0.0
     else:
         k = np.array([R[2, 1] - R[1, 2],
                       R[0, 2] - R[2, 0],
@@ -322,3 +327,35 @@ def se3_exp(twist: np.ndarray) -> np.ndarray:
     p = V @ v
 
     return homogenous_transform(R, p)
+
+
+def adjoint(T: np.ndarray) -> np.ndarray:
+    """计算 SE(3) 的 Adjoint 矩阵 Ad_T ∈ R^{6×6}。
+
+    Ad_T 将物体系 twist 映射到空间系: V_s = Ad_T V_b。
+
+    Ad_T = [R,     [p]×R ]
+           [0,      R    ]
+    """
+    R = T[:3, :3]
+    p = T[:3, 3]
+    Ad = np.zeros((6, 6))
+    Ad[:3, :3] = R
+    Ad[3:, 3:] = R
+    Ad[:3, 3:] = skew(p) @ R
+    return Ad
+
+
+def adjoint_inv_transpose(T: np.ndarray) -> np.ndarray:
+    """计算 Ad_T^{-T}，用于 wrench 变换: F_s = Ad_T^{-T} F_b。
+
+    Ad_T^{-T} = [R,         0    ]
+                [[p]× R,    R    ]
+    """
+    R = T[:3, :3]
+    p = T[:3, 3]
+    Ad_invT = np.zeros((6, 6))
+    Ad_invT[:3, :3] = R
+    Ad_invT[3:, :3] = skew(p) @ R
+    Ad_invT[3:, 3:] = R
+    return Ad_invT

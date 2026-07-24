@@ -176,7 +176,12 @@ class ParticleFilter:
         self.weights = np.ones(self.N) / self.N
 
     def predict(self, u: np.ndarray = None):
-        """预测步：对每个粒子施加过程模型 + 噪声"""
+        """预测步：对每个粒子施加过程模型。
+
+        约定：过程模型 f(x, u) 是确定性函数。
+        过程噪声由 ParticleFilter 在此方法中添加。
+        不要在 f(x, u) 内部添加随机噪声。
+        """
         if u is None:
             u = np.zeros(1)
 
@@ -190,19 +195,27 @@ class ParticleFilter:
                                      self.bounds[:, 0], self.bounds[:, 1])
 
     def update(self, z: np.ndarray):
-        """更新步：用观测似然更新权重"""
+        """更新步：用观测似然更新权重（log-sum-exp 稳定版）。
+
+        使用对数似然避免数值下溢：
+            w_i = w_i * exp(log_lik_i)
+        然后归一化。
+        """
+        log_weights = np.log(np.maximum(self.weights, 1e-300))
+
         for i in range(self.N):
             z_pred = self.h(self.particles[i])
-            # 高斯似然
             residual = z - z_pred
-            # 处理观测维度
+            # 高斯对数似然（忽略常数项，因为归一化时会消去）
             log_likelihood = -0.5 * np.sum((residual / self.obs_std) ** 2)
-            self.weights[i] *= np.exp(log_likelihood)
+            log_weights[i] += log_likelihood
 
-        # 归一化
-        w_sum = np.sum(self.weights)
-        if w_sum > 0:
-            self.weights /= w_sum
+        # log-sum-exp 归一化
+        log_max = np.max(log_weights)
+        w = np.exp(log_weights - log_max)
+        w_sum = np.sum(w)
+        if w_sum > 1e-300:
+            self.weights = w / w_sum
         else:
             self.weights = np.ones(self.N) / self.N
 

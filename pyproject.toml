@@ -19,4 +19,11 @@ dependencies = [
 ]
 
 [dependency-groups]
-dev = []
+dev = [
+    "pytest",
+    "pytest-cov",
+    "ruff",
+    "nbqa",
+    "nbclient",
+    "nbconvert",
+]
