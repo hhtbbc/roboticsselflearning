@@ -92,3 +92,31 @@
 - RRT失败后 fallback: `path_rrt = [q_start, q_goal]`
 - 使用 `KalmanFilter`（线性KF）但文档描述为EKF
 - 控制矩阵B为零矩阵，力矩信息未进入预测
+
+## 2026-07-24 更新 — 第二轮批次 A 修复
+
+### 已修复
+
+| # | 原问题 | 修复内容 | 测试 |
+|---|--------|----------|:--:|
+| 1 | Twist [v;ω] vs [ω;v] 矛盾 | CONVENTIONS, se3_exp, adjoint, adjoint_inv_transpose 全面修正为 [ω;v] | ✅ |
+| 2 | so3_log θ≈π 退化 | 三分支实现: θ≈0 展开/一般/θ≈π (R+I 提取轴) | ✅ |
+| 3 | Geometric Jacobian 被当成 Spatial Jacobian | 分离概念; 新增 compute_space_jacobian_poe | ✅ |
+| 4 | PoE 对比表误导 | 修正参数量/奇异性/工业采用描述 | ✅ |
+| 5 | 优化残差符号不一致 | 统一推导: r = x_d-f(q), J_r = -J | ✅ |
+| 6 | 周期关节未贯穿规划器 | edge_collision_free 支持周期距离+周期插值 | ✅ |
+| 7 | 测试缺失 | 新增 test_planning.py, 180° so3_log, Adjoint 一致性, 功率不变性 | ✅ |
+| 8 | check_notebooks 无 sys.exit | 失败时 raise SystemExit(1) | ✅ |
+| 9 | CI 缺失 | .github/workflows/ci.yml (ruff + pytest) | ✅ |
+| 10 | homogenous 拼写 | homogeneous_transform + 兼容别名 | ✅ |
+| 11 | se3_log 缺失 | 新实现: SE(3)→se(3) 对数映射 (含左雅可比逆) | ✅ |
+
+### 仍待处理
+
+| # | 问题 |
+|---|------|
+| 1 | NB04b/05b 代码仍使用局部定义的旧版 adjoint/se3_hat (与模块新实现不一致) |
+| 2 | README 索引未更新至 45 个 Notebook |
+| 3 | NB14 TOPP 未完成 |
+| 4 | test_dynamics.py 未创建 |
+| 5 | Jupytext 双向同步未配置 |

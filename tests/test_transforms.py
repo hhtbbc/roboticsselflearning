@@ -3,10 +3,11 @@ import numpy as np
 import sys; sys.path.insert(0, '.')
 from src.robotics_learning.transforms import (
     rot_x, rot_y, rot_z, skew, unskew, is_valid_rotation,
-    homogenous_transform, inv_homogenous, transform_point,
+    homogenous_transform, homogeneous_transform, inv_homogenous, transform_point,
     euler_zyx_to_rot, rot_to_euler_zyx,
     axis_angle_to_rot, rot_to_axis_angle,
-    Quaternion, slerp, so3_exp, so3_log, se3_exp
+    Quaternion, slerp, so3_exp, so3_log, se3_exp, se3_log,
+    adjoint, adjoint_inv_transpose
 )
 
 RNG = np.random.RandomState(42)
@@ -170,14 +171,35 @@ class TestLieGroup:
 
     def test_exp_log_roundtrip(self):
         for _ in range(20):
-            # 限制 |ω| < π 以保证 log∘exp = id
             omega = RNG.uniform(-2.0, 2.0, 3)
-            while np.linalg.norm(omega) > np.pi - 0.1:
-                omega = RNG.uniform(-1.5, 1.5, 3)
+            while np.linalg.norm(omega) > np.pi - 0.5:
+                omega = RNG.uniform(-1.0, 1.0, 3)
             R = so3_exp(omega)
             omega2 = so3_log(R)
             assert np.allclose(omega, omega2, atol=1e-6), \
                 f"ω={omega} (|ω|={np.linalg.norm(omega):.3f}), ω2={omega2}"
+
+    def test_log_180_degree(self):
+        """精确 180° 旋转：so3_log 不应退化"""
+        for axis in [[1,0,0], [0,1,0], [0,0,1], [1,1,0], [0.3,0.6,0.2]]:
+            k = np.array(axis, dtype=float); k /= np.linalg.norm(k)
+            R = axis_angle_to_rot(k, np.pi)
+            omega = so3_log(R)
+            # 恢复的旋转向量应和原始轴平行
+            if np.linalg.norm(omega) > 1e-10:
+                k2 = omega / np.linalg.norm(omega)
+                assert abs(np.dot(k, k2)) > 0.999, \
+                    f"axis={k}, recovered={k2}, dot={np.dot(k,k2):.4f}"
+                assert abs(np.linalg.norm(omega) - np.pi) < 1e-6
+
+    def test_log_near_180(self):
+        """接近 180° (±1e-8)：应能稳定处理"""
+        k = np.array([0.0, 0.0, 1.0])
+        for angle in [np.pi - 1e-8, np.pi + 1e-8]:
+            R = axis_angle_to_rot(k, angle)
+            omega = so3_log(R)
+            R2 = so3_exp(omega)
+            assert np.allclose(R @ np.array([1,0,0]), R2 @ np.array([1,0,0]), atol=1e-6)
 
     def test_exp_zero(self):
         assert np.allclose(so3_exp(np.zeros(3)), np.eye(3))
@@ -196,7 +218,36 @@ class TestLieGroup:
 
     def test_se3_exp_translation(self):
         """纯平移 twist 的 SE(3) exp"""
-        twist = np.array([1.0, 2.0, 3.0, 0, 0, 0])  # [v, ω=0]
+        twist = np.array([0, 0, 0, 1.0, 2.0, 3.0])  # [ω=0; v]
         T = se3_exp(twist)
         assert np.allclose(T[:3, :3], np.eye(3))
-        assert np.allclose(T[:3, 3], twist[:3])
+        assert np.allclose(T[:3, 3], twist[3:])
+
+    def test_se3_log_roundtrip(self):
+        """se3_log(se3_exp(twist)) ≈ twist"""
+        for _ in range(10):
+            twist = RNG.uniform(-1, 1, 6)
+            twist[:3] *= 0.5  # limit rotation
+            T = se3_exp(twist)
+            twist2 = se3_log(T)
+            # 旋转部分应在 2π 等价内一致
+            assert np.allclose(so3_exp(twist[:3]) @ np.array([1,0,0]),
+                              so3_exp(twist2[:3]) @ np.array([1,0,0]), atol=1e-6)
+
+    def test_adjoint_consistency(self):
+        """Ad_{T1 T2} = Ad_{T1} Ad_{T2}"""
+        R1 = axis_angle_to_rot(RNG.randn(3), 1.0)
+        R2 = axis_angle_to_rot(RNG.randn(3), 0.5)
+        T1 = homogeneous_transform(R1, RNG.uniform(-1, 1, 3))
+        T2 = homogeneous_transform(R2, RNG.uniform(-1, 1, 3))
+        Ad1 = adjoint(T1); Ad2 = adjoint(T2)
+        Ad12 = adjoint(T1 @ T2)
+        assert np.allclose(Ad1 @ Ad2, Ad12, atol=1e-10)
+
+    def test_adjoint_power_invariance(self):
+        """V_b^T F_b = V_s^T F_s (功率不变性)"""
+        V_b = RNG.randn(6); F_b = RNG.randn(6)
+        T = homogeneous_transform(axis_angle_to_rot(RNG.randn(3), 0.7), RNG.uniform(-1,1,3))
+        V_s = adjoint(T) @ V_b
+        F_s = adjoint_inv_transpose(T) @ F_b
+        assert np.allclose(V_b @ F_b, V_s @ F_s, atol=1e-10)

@@ -38,18 +38,31 @@ def periodic_distance(q1: np.ndarray, q2: np.ndarray,
 
 def edge_collision_free(q_a: np.ndarray, q_b: np.ndarray,
                         collision_fn: Callable[[np.ndarray], bool],
-                        resolution: float = 0.05) -> bool:
+                        resolution: float = 0.05,
+                        joint_types: List[str] = None) -> bool:
     """
     沿整条边 (q_a → q_b) 以给定分辨率插值检测碰撞。
 
-    采样数 = max(2, ceil(||q_b - q_a|| / resolution))
+    使用周期距离计算采样数，使用周期插值处理旋转关节。
+    线性插值在旋转关节上会被替换为最短弧插值。
+
+    采样数 = max(2, ceil(dist_periodic / resolution))
 
     返回: True 如果整条边都无碰撞
     """
-    dist = np.linalg.norm(q_b - q_a)
+    dist = periodic_distance(q_a, q_b, joint_types)
     n_samples = max(2, int(np.ceil(dist / resolution)))
     for alpha in np.linspace(0, 1, n_samples):
-        q_mid = (1 - alpha) * q_a + alpha * q_b
+        if joint_types is not None:
+            q_mid = q_a.copy()
+            for d, jt in enumerate(joint_types):
+                if jt == 'revolute':
+                    diff = wrap_to_pi(q_b[d] - q_a[d])
+                    q_mid[d] = q_a[d] + alpha * diff
+                else:
+                    q_mid[d] = (1 - alpha) * q_a[d] + alpha * q_b[d]
+        else:
+            q_mid = (1 - alpha) * q_a + alpha * q_b
         if not collision_fn(q_mid):
             return False
     return True
@@ -301,7 +314,7 @@ def rrt_plan(c_space_free: Callable[[np.ndarray], bool],
         else:
             q_rand = rng.uniform(bounds[:, 0], bounds[:, 1])
 
-        # 找最近节点
+        # 找最近节点（使用欧氏距离——适用于无周期关节的C-space）
         dists = [np.linalg.norm(n.q - q_rand) for n in nodes]
         nearest_idx = np.argmin(dists)
         q_near = nodes[nearest_idx].q

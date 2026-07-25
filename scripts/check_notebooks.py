@@ -63,8 +63,9 @@ def main():
     # Summary
     total = len(results)
     passed = sum(1 for r in results if r["success"])
+    failed = total - passed
     print(f"\n{'='*50}")
-    print(f"Results: {passed}/{total} passed")
+    print(f"Results: {passed}/{total} passed, {failed} failed")
 
     # Write JSON report
     report_path = ROOT / "outputs" / "notebook_check_report.json"
@@ -72,6 +73,10 @@ def main():
     with open(report_path, "w") as f:
         json.dump(results, f, indent=2)
     print(f"Report: {report_path}")
+
+    if failed > 0:
+        print(f"\n❌ {failed} notebook(s) failed!")
+        raise SystemExit(1)
 
 if __name__ == "__main__":
     main()

@@ -30,9 +30,18 @@ $${}^{i-1}_{i}\mathbf{T} = R_x(\alpha_{i-1})\,T_x(a_{i-1})\,R_z(\theta_i)\,T_z(d
 
 ## 4. Twist 排列
 
-$$\mathcal{V} = \begin{bmatrix} \mathbf{v} \\ \boldsymbol{\omega} \end{bmatrix}$$
+遵循 Lynch & Park《Modern Robotics》约定：
 
-线速度在前，角速度在后。这是 Lynch & Park (Modern Robotics) 的约定。
+$$\mathcal{V} = \begin{bmatrix} \boldsymbol{\omega} \\ \mathbf{v} \end{bmatrix}$$
+
+角速度在前，线速度在后。对应 hat 操作符：
+
+$$\boldsymbol{\xi}^\wedge = \begin{bmatrix} [\boldsymbol{\omega}]_\times & \mathbf{v} \\ \mathbf{0}^T & 0 \end{bmatrix} \in \mathfrak{se}(3)$$
+
+Screw axis（螺旋轴）：$\mathcal{S} = [\boldsymbol{\omega}; \mathbf{v}]$
+
+注意区分：**空间 twist** $\mathcal{V}_s$ 的线速度部分 $\mathbf{v}_s$ 不是末端点速度。
+末端点速度 $\dot{\mathbf{p}}_E = \mathbf{v}_s + \boldsymbol{\omega}_s \times \mathbf{p}_E$。几何雅可比的上半部分映射到 $\dot{\mathbf{p}}_E$，这在概念上与 spatial twist 的 $\mathbf{v}_s$ 不同。
 
 ## 5. 四元数
 

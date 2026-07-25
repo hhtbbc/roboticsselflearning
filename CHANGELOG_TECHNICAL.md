@@ -70,3 +70,26 @@ NB05 ✅ NB06 ✅ NB23 ✅ NB24 ✅ NB25 ✅
 - tests/ 缺少动力学和估计测试
 - .github/workflows/ci.yml 未创建
 - BUILD_STATUS.md / LEARNING_LOG.md 未拆分
+
+## 2026-07-24 — 批次 A: 统一 Lie 群约定
+
+### 修改文件
+
+| 文件 | 变更 |
+|------|------|
+| `CONVENTIONS.md` | Twist 排列修正: [v;ω] → [ω;v] (Modern Robotics), 添加几何 vs 空间雅可比区分 |
+| `src/robotics_learning/transforms.py` | `so3_log`: 三分支 (θ≈0/一般/θ≈π); `se3_exp`/`adjoint`/`adjoint_inv_transpose`: 修正为 [ω;v]; 新增 `se3_log`; 新增 `homogeneous_transform` 拼写修正+别名 |
+| `src/robotics_learning/kinematics.py` | `compute_geometric_jacobian`: 文档明确为"经典几何雅可比", 新增 `compute_space_jacobian_poe` |
+| `src/robotics_learning/planning.py` | `edge_collision_free`: 支持周期关节; RRT 注释说明 |
+| `notebook_sources/04b_se3_twists_adjoint.py` | 修正 twist 约定文本和 Jacobian 身份声明 |
+| `notebook_sources/06b_numerical_optimization.py` | 修正 Gauss-Newton 残差符号注释 |
+| `tests/test_transforms.py` | 新增 180° so3_log, Adjoint 一致性, 功率不变性, se3_log 测试 |
+| `tests/test_planning.py` | 新建: wrap_to_pi, 周期距离, 周期边碰撞, RRT, A* |
+| `scripts/check_notebooks.py` | 失败时 sys.exit(1) |
+| `.github/workflows/ci.yml` | 新建: ruff + pytest |
+
+### 测试结果
+
+```
+47 passed in 0.38s
+```

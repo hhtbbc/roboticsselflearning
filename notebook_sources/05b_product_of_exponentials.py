@@ -89,14 +89,15 @@
 # %%
 import numpy as np
 import sys; sys.path.insert(0, '..')
-from src.robotics_learning.transforms import skew, se3_exp, homogenous_transform, rot_z
-from src.robotics_learning.kinematics import forward_kinematics
+from src.robotics_learning.transforms import skew, se3_exp, homogeneous_transform, rot_z, adjoint
+from src.robotics_learning.kinematics import forward_kinematics, compute_space_jacobian_poe
 %matplotlib inline
 print("✅ 导入完成")
 
 # %%
 def se3_hat(twist):
-    v, omega = twist[:3], twist[3:]
+    """ξ = [ω; v] → ξ^∧ ∈ se(3)"""
+    omega, v = twist[:3], twist[3:]
     Xi = np.zeros((4, 4))
     Xi[:3, :3] = skew(omega); Xi[:3, 3] = v
     return Xi
@@ -120,7 +121,7 @@ def poe_fk_body(screw_axes_body, M, q):
 
 # %%
 l1, l2 = 1.0, 0.8
-M_2r = homogenous_transform(np.eye(3), np.array([l1+l2, 0, 0]))
+M_2r = homogeneous_transform(np.eye(3), np.array([l1+l2, 0, 0]))
 
 # 螺旋轴 [v; ω]（Lynch & Park 约定）
 S1 = np.array([0, 0, 0, 0, 0, 1])
@@ -138,19 +139,16 @@ print(f"PoE FK:\n{np.round(T_poe, 4)}")
 print(f"\nDH FK:\n{np.round(T_dh, 4)}")
 print(f"\n一致? {np.allclose(T_poe, T_dh, atol=1e-10)}")
 
-# 验证 PoE 雅可比（空间系）：J_s 的第 i 列 = Ad_{exp([S1]q1)...exp([S_{i-1}]q_{i-1})} S_i
-from src.robotics_learning.transforms import adjoint as compute_adjoint
-J_poe = np.zeros((6, 2))
-T_cum = np.eye(4)
-for i in range(2):
-    J_poe[:, i] = compute_adjoint(T_cum) @ S1 if i == 0 else compute_adjoint(T_cum) @ S2
-    T_cum = T_cum @ se3_exp(S1 * q_test[0] if i == 0 else S2 * q_test[1])
+# PoE 空间雅可比
+J_poe = compute_space_jacobian_poe([S1, S2], q_test)
 
+# 经典几何雅可比（用于对比）
 from src.robotics_learning.kinematics import compute_geometric_jacobian
 J_dh = compute_geometric_jacobian(np.array([[l1,0,0],[l2,0,0]]), q_test)
-print(f"\nPoE 雅可比:\n{np.round(J_poe, 4)}")
-print(f"DH 雅可比:\n{np.round(J_dh, 4)}")
-print(f"一致? {np.allclose(J_poe, J_dh, atol=1e-10)}")
+print(f"\nPoE Space Jacobian [ω; v]:\n{np.round(J_poe, 4)}")
+print(f"DH 几何雅可比 [ṗ_E; ω]:\n{np.round(J_dh, 4)}")
+print(f"角速度部分一致? {np.allclose(J_poe[:3], J_dh[3:], atol=1e-10)}")
+print(f"(线速度部分不同：J_poe 的 v 是空间系原点速度, J_dh 上半部是末端点速度)")
 
 # %% [markdown]
 # ## 7. 练习题

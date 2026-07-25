@@ -67,12 +67,16 @@ def unskew(S: np.ndarray) -> np.ndarray:
 # 齐次变换矩阵 (Homogeneous Transformation, SE(3))
 # =============================================================================
 
-def homogenous_transform(R: np.ndarray, p: np.ndarray) -> np.ndarray:
+def homogeneous_transform(R: np.ndarray, p: np.ndarray) -> np.ndarray:
     """构造齐次变换矩阵 T = [R p; 0 1] ∈ SE(3)"""
     T = np.eye(4)
     T[:3, :3] = R
     T[:3, 3] = p
     return T
+
+
+# 向后兼容别名
+homogenous_transform = homogeneous_transform
 
 
 def inv_homogenous(T: np.ndarray) -> np.ndarray:
@@ -290,14 +294,47 @@ def so3_exp(omega: np.ndarray) -> np.ndarray:
 
 def so3_log(R: np.ndarray) -> np.ndarray:
     """
-    SO(3) → so(3) 对数映射
+    SO(3) → so(3) 对数映射（三分支：θ≈0, 一般角度, θ≈π）
 
     返回:
-        omega: 3×1 旋转向量
+        omega: 3×1 旋转向量 (norm = θ ∈ [0, π])
     """
-    theta = np.arccos(np.clip((np.trace(R) - 1) / 2, -1, 1))
+    trace_R = np.clip((np.trace(R) - 1) / 2, -1.0, 1.0)
+    theta = np.arccos(trace_R)
+
     if theta < 1e-10:
-        return np.zeros(3)
+        # 分支 1: θ ≈ 0，小角度展开
+        # log(R) ≈ (R - R^T)/2
+        return np.array([R[2, 1] - R[1, 2],
+                         R[0, 2] - R[2, 0],
+                         R[1, 0] - R[0, 1]]) / 2.0
+
+    if np.pi - theta < 1e-8:
+        # 分支 3: θ ≈ π，用 R + I 提取旋转轴
+        # R + I = 2 cos²(θ/2) I + sin(θ) [k]× + (1-cos(θ)) k k^T
+        # 当 θ=π 时: R + I = 2 k k^T
+        RpI = R + np.eye(3)
+        # 取(R+I)的最大列作为旋转轴方向
+        col_norms = np.sum(RpI**2, axis=0)
+        best_col = np.argmax(col_norms)
+        k = RpI[:, best_col]
+        k_norm = np.linalg.norm(k)
+        if k_norm < 1e-10:
+            # 退化情况: R = I (θ=0, 但 theta≈π 条件不应触发此分支)
+            return np.zeros(3)
+        k = k / k_norm
+        # 确定符号: 任取垂直于 k 的向量 v，sign = sign(v^T R v_rotated)
+        # 简化: 通过非对角元素符号确定
+        s = np.sign(R[2, 1] - R[1, 2])
+        if abs(s) < 1e-10:
+            s = np.sign(R[0, 2] - R[2, 0])
+        if abs(s) < 1e-10:
+            s = np.sign(R[1, 0] - R[0, 1])
+        if abs(s) < 1e-10:
+            s = 1.0
+        return k * np.pi * s
+
+    # 分支 2: 一般角度
     ln_R = theta / (2 * np.sin(theta)) * (R - R.T)
     return np.array([ln_R[2, 1], ln_R[0, 2], ln_R[1, 0]])
 
@@ -306,17 +343,19 @@ def se3_exp(twist: np.ndarray) -> np.ndarray:
     """
     se(3) → SE(3) 指数映射
 
+    遵循 Modern Robotics 约定：twist = [ω; v]（角速度在前，线速度在后）。
+
     参数:
-        twist: 6×1 [v; omega] (线速度部分 + 角速度部分)
+        twist: 6×1 [omega; v]
     返回:
         T: 4×4 齐次变换矩阵
     """
-    v = twist[:3]
-    omega = twist[3:]
+    omega = twist[:3]
+    v = twist[3:]
     theta = np.linalg.norm(omega)
 
     if theta < 1e-10:
-        return homogenous_transform(np.eye(3), v)
+        return homogeneous_transform(np.eye(3), v)
 
     axis = omega / theta
     K = skew(axis)
@@ -326,36 +365,64 @@ def se3_exp(twist: np.ndarray) -> np.ndarray:
          + (1 - np.sin(theta) / theta) * (K @ K))
     p = V @ v
 
-    return homogenous_transform(R, p)
+    return homogeneous_transform(R, p)
 
 
 def adjoint(T: np.ndarray) -> np.ndarray:
     """计算 SE(3) 的 Adjoint 矩阵 Ad_T ∈ R^{6×6}。
 
+    遵循 [ω; v] twist 排列 (Modern Robotics)。
     Ad_T 将物体系 twist 映射到空间系: V_s = Ad_T V_b。
 
-    Ad_T = [R,     [p]×R ]
-           [0,      R    ]
+    Ad_T = [R,         0    ]
+           [[p]× R,    R    ]
     """
     R = T[:3, :3]
     p = T[:3, 3]
     Ad = np.zeros((6, 6))
-    Ad[:3, :3] = R
-    Ad[3:, 3:] = R
-    Ad[:3, 3:] = skew(p) @ R
+    Ad[:3, :3] = R          # ω_s = R ω_b
+    Ad[3:, :3] = skew(p) @ R  # v_s = [p]×R ω_b + R v_b
+    Ad[3:, 3:] = R          # v_s 中来自 v_b 的部分
     return Ad
 
 
 def adjoint_inv_transpose(T: np.ndarray) -> np.ndarray:
     """计算 Ad_T^{-T}，用于 wrench 变换: F_s = Ad_T^{-T} F_b。
 
-    Ad_T^{-T} = [R,         0    ]
-                [[p]× R,    R    ]
+    遵循 [n; f] wrench 排列（力矩在前，力在后，对偶于 [ω; v] twist）。
+
+    Ad_T^{-T} = [R,     [p]×R ]
+                [0,      R    ]
     """
     R = T[:3, :3]
     p = T[:3, 3]
     Ad_invT = np.zeros((6, 6))
-    Ad_invT[:3, :3] = R
-    Ad_invT[3:, :3] = skew(p) @ R
-    Ad_invT[3:, 3:] = R
+    Ad_invT[:3, :3] = R          # n_s = R n_b + [p]×R f_b
+    Ad_invT[:3, 3:] = skew(p) @ R
+    Ad_invT[3:, 3:] = R          # f_s = R f_b
     return Ad_invT
+
+
+def se3_log(T: np.ndarray) -> np.ndarray:
+    """
+    SE(3) → se(3) 对数映射
+
+    返回:
+        twist: 6×1 [omega; v] ∈ se(3)
+    """
+    R = T[:3, :3]
+    p = T[:3, 3]
+    omega = so3_log(R)
+    theta = np.linalg.norm(omega)
+
+    if theta < 1e-10:
+        return np.concatenate([np.zeros(3), p])
+
+    axis = omega / theta
+    K = skew(axis)
+    # 左雅可比逆: V^{-1} = I - θ/2·K + (1 - θ·cot(θ/2)/(2θ))·K²
+    cot_half = np.cos(theta/2) / np.sin(theta/2)
+    V_inv = (np.eye(3) - theta/2 * K
+             + (1 - theta * cot_half / 2) / theta * (K @ K))
+    v = V_inv @ p
+    return np.concatenate([omega, v])

@@ -41,7 +41,7 @@
 
 # %% [markdown]
 # 本课程使用 **Lynch & Park (Modern Robotics)** 约定：
-# - twist 排列：$\mathcal{V} = [\mathbf{v}; \boldsymbol{\omega}]$（线速度在前，角速度在后）
+# - twist 排列：$\mathcal{V} = [\boldsymbol{\omega}; \mathbf{v}]$（角速度在前，线速度在后，Modern Robotics 约定）
 # - hat 操作符：$\boldsymbol{\xi}^\wedge = \begin{bmatrix} [\boldsymbol{\omega}]_\times & \mathbf{v} \\ \mathbf{0}^T & 0 \end{bmatrix} \in \mathfrak{se}(3)$
 # - 空间 twist $\mathcal{V}_s$ 和物体 twist $\mathcal{V}_b$ 的关系：$\mathcal{V}_s = \text{Ad}_{T} \mathcal{V}_b$
 
@@ -57,7 +57,7 @@
 # %% [markdown]
 # ### 4.2 $\mathfrak{se}(3)$ 上的 hat/vee
 #
-# $$\boldsymbol{\xi}^\wedge = \begin{bmatrix} \mathbf{v} \\ \boldsymbol{\omega} \end{bmatrix}^\wedge = \begin{bmatrix} [\boldsymbol{\omega}]_\times & \mathbf{v} \\ \mathbf{0}^T & 0 \end{bmatrix} \in \mathfrak{se}(3)$$
+# $$\boldsymbol{\xi}^\wedge = \begin{bmatrix} \boldsymbol{\omega} \\ \mathbf{v} \end{bmatrix}^\wedge = \begin{bmatrix} [\boldsymbol{\omega}]_\times & \mathbf{v} \\ \mathbf{0}^T & 0 \end{bmatrix} \in \mathfrak{se}(3)$$
 # $$\left(\begin{bmatrix} [\boldsymbol{\omega}]_\times & \mathbf{v} \\ \mathbf{0}^T & 0 \end{bmatrix}\right)^\vee = \begin{bmatrix} \mathbf{v} \\ \boldsymbol{\omega} \end{bmatrix}$$
 
 # %% [markdown]
@@ -119,7 +119,8 @@
 #
 # - $\mathbf{J}_s$ 的每一列是关节 $i$ 的 twist 在**空间系**中的表达
 # - $\mathbf{J}_b$ 的每一列是关节 $i$ 的 twist 在**物体系**中的表达
-# - NB07 的 `compute_geometric_jacobian` 计算的是**空间雅可比**
+# - NB07 的 `compute_geometric_jacobian` 计算的是**经典几何雅可比**（末端点速度+角速度）
+# - Lie 群空间雅可比使用 `compute_space_jacobian_poe`，两者概念不同
 
 # %% [markdown]
 # ## 8. Python 实现
@@ -128,7 +129,10 @@
 import numpy as np
 import matplotlib.pyplot as plt
 import sys; sys.path.insert(0, '..')
-from src.robotics_learning.transforms import skew, so3_exp, axis_angle_to_rot, rot_z, homogenous_transform
+from src.robotics_learning.transforms import (
+    skew, se3_exp, so3_exp, axis_angle_to_rot, rot_z,
+    homogeneous_transform, adjoint, adjoint_inv_transpose, se3_log
+)
 %matplotlib inline
 rng = np.random.RandomState(42)
 print("✅ 导入完成")
@@ -138,42 +142,24 @@ print("✅ 导入完成")
 
 # %%
 def se3_hat(twist):
-    """ξ = [v; ω] → ξ^∧ ∈ se(3)"""
-    v, omega = twist[:3], twist[3:]
+    """ξ = [ω; v] → ξ^∧ ∈ se(3) (Modern Robotics convention)"""
+    omega, v = twist[:3], twist[3:]
     Xi = np.zeros((4, 4))
     Xi[:3, :3] = skew(omega)
     Xi[:3, 3] = v
     return Xi
 
 def se3_vee(Xi):
-    """ξ^∧ ∈ se(3) → ξ = [v; ω]"""
+    """ξ^∧ ∈ se(3) → ξ = [ω; v]"""
     omega = np.array([Xi[2,1], Xi[0,2], Xi[1,0]])
     v = Xi[:3, 3]
-    return np.concatenate([v, omega])
+    return np.concatenate([omega, v])
 
-def adjoint(T):
-    """T ∈ SE(3) → Ad_T ∈ R^{6×6}"""
-    R = T[:3, :3]; p = T[:3, 3]
-    Ad = np.zeros((6, 6))
-    Ad[:3, :3] = R; Ad[3:, 3:] = R
-    Ad[:3, 3:] = skew(p) @ R
-    return Ad
-
-def adjoint_inv_transpose(T):
-    """T → Ad_T^{-T} (wrench 变换)"""
-    R = T[:3, :3]; p = T[:3, 3]
-    Ad_invT = np.zeros((6, 6))
-    Ad_invT[:3, :3] = R
-    Ad_invT[3:, :3] = skew(p) @ R
-    Ad_invT[3:, 3:] = R
-    return Ad_invT
-
-# 测试: 随机 SE(3) 的 Adjoint 往返
+# 测试 Adjoint 往返
 R_test = axis_angle_to_rot(rng.randn(3), 1.0)
-T_test = homogenous_transform(R_test, rng.uniform(-1, 1, 3))
+T_test = homogeneous_transform(R_test, rng.uniform(-1, 1, 3))
 Ad = adjoint(T_test)
-# Ad_T · Ad_{T^{-1}} = I
-Ad_inv = adjoint(homogenous_transform(R_test.T, -R_test.T @ T_test[:3, 3]))
+Ad_inv = adjoint(homogeneous_transform(R_test.T, -R_test.T @ T_test[:3, 3]))
 assert np.allclose(Ad @ Ad_inv, np.eye(6), atol=1e-10)
 print("✅ Adjoint 往返测试通过")
 
@@ -181,27 +167,43 @@ print("✅ Adjoint 往返测试通过")
 # ### 8.2 Twist 变换演示
 
 # %%
-# 2R 臂在 q1=30°, q2=45° 的空间雅可比
-from src.robotics_learning.kinematics import compute_geometric_jacobian, forward_kinematics
+# 2R 臂在 q1=30°, q2=45° — 经典几何雅可比 vs Lie 群空间雅可比
+from src.robotics_learning.kinematics import (
+    compute_geometric_jacobian, compute_space_jacobian_poe, forward_kinematics
+)
 dh = np.array([[1.0, 0, 0], [0.8, 0, 0]])
 q = np.array([np.pi/6, np.pi/4])
-J_s = compute_geometric_jacobian(dh, q)
 
-# 末端位姿 T
+# 经典几何雅可比 (末端点速度 + 角速度): J_geom = [J_v; J_ω]
+J_geom = compute_geometric_jacobian(dh, q)
+
+# Lie 群空间雅可比 (PoE, [ω; v] twist): 需要螺旋轴
+# 2R 臂螺旋轴 [ω; v] (Modern Robotics)
+l1 = 1.0
+S1 = np.array([0, 0, 1, 0, 0, 0])          # 基座关节: ω=[0,0,1], v=[0,0,0]
+S2 = np.array([0, 0, 1, 0, -l1, 0])         # 肘关节: ω=[0,0,1], v=-ω×p=[0,-l1,0]
+J_s = compute_space_jacobian_poe([S1, S2], q)
+
+# 末端位姿
 T_end, _ = forward_kinematics(np.column_stack([dh, q]))
 Ad_end = adjoint(T_end)
 
-# 物体雅可比: J_b = Ad_{T^{-1}} J_s
-J_b = np.linalg.solve(Ad_end, J_s)  # Ad_T^{-1} · J_s
+# 物体雅可比 J_b = Ad_{T^{-1}} J_s
+J_b = np.linalg.solve(Ad_end, J_s)
 
-# 验证: 同一关节速度下，空间 twist 和物体 twist 的关系
+# 验证: Ad_T · V_b = V_s
 q_dot = np.array([1.0, -0.5])
-V_s = J_s @ q_dot   # 空间 twist
-V_b = J_b @ q_dot   # 物体 twist
+V_s = J_s @ q_dot
+V_b = J_b @ q_dot
 V_s_from_adj = Ad_end @ V_b
-print(f"V_s = J_s q̇:\n{np.round(V_s, 4)}")
-print(f"Ad_T · V_b:\n{np.round(V_s_from_adj, 4)}")
-print(f"一致? {np.allclose(V_s, V_s_from_adj, atol=1e-10)}")
+print(f"Space Jacobian V_s:\n{np.round(V_s[:3], 4)}  ← [ω; v]")
+print(f"Ad_T · V_b:\n{np.round(V_s_from_adj[:3], 4)}")
+print(f"Adjoint一致? {np.allclose(V_s, V_s_from_adj, atol=1e-10)}")
+
+# 对比几何雅可比: 上半部分是末端点速度 ṗ_E
+V_geom = J_geom @ q_dot
+print(f"\n几何雅可比 [ṗ_E; ω]:\n{np.round(V_geom, 4)}")
+print(f"ṗ_E ≠ v_s (v_s = v at spatial origin, ṗ_E = v_s + ω×p_E)")
 
 # %% [markdown]
 # ### 8.3 Wrench 变换验证

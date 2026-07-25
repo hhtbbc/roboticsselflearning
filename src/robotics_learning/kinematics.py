@@ -178,7 +178,7 @@ def ik_numerical(dh_table: np.ndarray, T_des: np.ndarray,
         if np.linalg.norm(error) < tol:
             return q
 
-        # 几何雅可比 (Spatial Jacobian, twist = [v; ω])
+        # 经典几何雅可比 (末端点速度 + 角速度)
         J = compute_geometric_jacobian(dh_table, q)
 
         # 更新关节角（加权阻尼最小二乘）
@@ -209,17 +209,23 @@ def ik_numerical(dh_table: np.ndarray, T_des: np.ndarray,
 
 def compute_geometric_jacobian(dh_table: np.ndarray, q: np.ndarray) -> np.ndarray:
     """
-    逐列构造几何雅可比矩阵 J(q) ∈ ℝ^{6×n}
+    逐列构造经典几何雅可比（末端点速度 + 角速度）。
+
+    上半部分 J_v 映射关节速度到**末端点的实际线速度** ṗ_E = J_v q̇。
+    下半部分 J_ω 映射关节速度到末端角速度 ω_E = J_ω q̇。
+
+    这是经典教材 (Craig, Siciliano) 中的几何雅可比，
+    不是 Lie 群中的 Spatial Jacobian（后者的线速度部分是 v_s ≠ ṗ_E）。
 
     对于旋转关节 i：
-        J_v_i = z_{i-1} × (p_n − p_{i-1})
-        J_ω_i = z_{i-1}
+        J_v_i = z_{i-1} × (p_n − p_{i-1})     （产生末端点速度）
+        J_ω_i = z_{i-1}                        （产生末端角速度）
 
     参数:
         dh_table: (n,3) [a, alpha, d] 不含 θ
         q: (n,) 关节角
     返回:
-        J: 6×n 几何雅可比 [J_v; J_ω]
+        J: 6×n [J_v; J_ω] — 上半 3 行 = 线速度, 下半 3 行 = 角速度
     """
     n = len(q)
     dh_full = np.column_stack([dh_table, q])
@@ -274,3 +280,31 @@ def compute_analytical_jacobian(dh_table: np.ndarray, q: np.ndarray) -> np.ndarr
         J_A[:, i] = (fi - f0) / eps
 
     return J_A
+
+
+def compute_space_jacobian_poe(screw_axes: list, q: np.ndarray) -> np.ndarray:
+    """
+    基于螺旋轴递推计算 Lie 群空间雅可比 (Space Jacobian)。
+
+    遵循 Modern Robotics 约定: twist = [ω; v] (角速度在前)。
+
+    J_s 的第 i 列 = Ad_{e^{[S_1]q_1} ... e^{[S_{i-1}]q_{i-1}}} S_i
+
+    参数:
+        screw_axes: n 个螺旋轴列表，每个 S_i ∈ R^6 = [ω_i; v_i]
+        q: (n,) 关节角
+    返回:
+        J_s: 6×n 空间雅可比
+    """
+    from .transforms import se3_exp, adjoint
+    n = len(q)
+    J_s = np.zeros((6, n))
+    T_cum = np.eye(4)
+
+    for i in range(n):
+        S_i = screw_axes[i]
+        Ad_cum = adjoint(T_cum)
+        J_s[:, i] = Ad_cum @ S_i
+        T_cum = T_cum @ se3_exp(S_i * q[i])
+
+    return J_s

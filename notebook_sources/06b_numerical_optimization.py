@@ -151,8 +151,9 @@ for it in range(50):
     r = np.concatenate([p_err, omega_err])
 
     J = compute_geometric_jacobian(dh, q)
-    # Gauss-Newton: (J^T J) Δq = -J^T r
-    # Levenberg-Marquardt: (J^T J + λI) Δq = -J^T r
+    # r = x_d - f(q), J_r = ∂r/∂q = -J (J = geometric Jacobian ∂f/∂q)
+    # Gauss-Newton: J_r^T J_r Δq = -J_r^T r → J^T J Δq = J^T r
+    # Levenberg-Marquardt: (J^T J + λI) Δq = J^T r
     lam = 0.1 * (1.0 / (1 + 0.1*it))  # 递减阻尼
     JTJ = J.T @ J
     delta_q = np.linalg.solve(JTJ + lam * np.eye(2), J.T @ r)
