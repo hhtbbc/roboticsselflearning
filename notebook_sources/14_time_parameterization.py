@@ -12,67 +12,59 @@
 # ---
 
 # %% [markdown]
-# # Notebook 14：时间参数化（Time Parameterization）
+# # Notebook 14：时间参数化与时间最优沿路径规划 (TOPP)
 #
-# ## 1. 本节在知识体系中的位置
-#
-# ```
-# NB15-16 运动规划 ──→ 路径 q(s) ──→ NB14 时间参数化 ──→ q(t) ──→ NB17-18 控制
-#                        (几何)          (加时间律)      (时变参考)
-# ```
-#
-# 运动规划器输出一条几何路径 $\mathbf{q}(s)$。时间参数化回答："沿着这条路径，什么时刻该走到哪儿？"——即找到 $s(t)$ 使 $\mathbf{q}(t) = \mathbf{f}(s(t))$ 满足所有关节的速度/加速度/力矩约束，且**总时间最短或尽量短**。
+# ## 1. 定位
+# 运动规划器输出几何路径 $\mathbf{q}(s)$。时间参数化回答"多快走"——找到 $s(t)$ 使路径在时间上满足所有速度/加速度约束且总时间最短。
 
 # %% [markdown]
 # ## 2. 学习目标
-#
-# - ⭐ 理解路径参数化 $s \in [0,1]$ 和时间放缩 $\mathbf{q}(t) = \mathbf{f}(s(t))$
-# - ⭐ 掌握速度/加速度的链式分解
-# - ⭐ 理解 TOPP 的核心思想：在 $(s, \dot{s})$ 相平面上寻找可行域
-# - 📖 前向积分 + 后向积分求时间最优轨迹
-# - 📚 TOPP-RA 和力矩约束
+# - ⭐ 路径参数化 $s \in [0,1]$: $\mathbf{q}(t) = \mathbf{f}(s(t))$
+# - ⭐ 链式分解: $\ddot{\mathbf{q}} = \mathbf{f}'(s)\ddot{s} + \mathbf{f}''(s)\dot{s}^2$
+# - ⭐ 在 $(s, \dot{s})$ 相平面中理解 MVC 和可行域
+# - ⭐ TOPP 核心: 前向最大加速 + 后向最大减速
+# - 📖 TOPP-RA 和力矩约束
 
 # %% [markdown]
-# ## 3. 路径参数化的数学 ⭐
+# ## 3. 链式分解 ⭐
 
 # %% [markdown]
-# ### 3.1 链式分解
+# 给定路径 $\mathbf{q} = \mathbf{f}(s), s \in [0, 1]$:
+# $$\dot{\mathbf{q}} = \mathbf{f}'(s)\dot{s}$$
+# $$\ddot{\mathbf{q}} = \mathbf{f}'(s)\ddot{s} + \mathbf{f}''(s)\dot{s}^2$$
 #
-# 给定几何路径 $\mathbf{q} = \mathbf{f}(s)$（由规划器提供，NB15-16），速度/加速度为：
-# $$\dot{\mathbf{q}} = \mathbf{f}'(s) \dot{s}$$
-# $$\ddot{\mathbf{q}} = \mathbf{f}'(s) \ddot{s} + \mathbf{f}''(s) \dot{s}^2$$
-#
-# 将关节约束转嫁到 $s$ 和 $\dot{s}$ 上：
-# $$-\dot{\mathbf{q}}_{max} \leq \mathbf{f}'(s) \dot{s} \leq \dot{\mathbf{q}}_{max}$$
-# $$-\ddot{\mathbf{q}}_{max} \leq \mathbf{f}'(s) \ddot{s} + \mathbf{f}''(s) \dot{s}^2 \leq \ddot{\mathbf{q}}_{max}$$
-#
-# 对于每个 $s$ 和每个关节 $i$，速度约束给出 $\dot{s}$ 的上界：
-# $$\dot{s} \leq \frac{\dot{q}_{max,i}}{|f'_i(s)|} \quad \text{（仅当 } f'_i(s) \neq 0 \text{ 时）}$$
+# 关节约束转化为对 $(s, \dot{s})$ 的约束:
+# $$-\dot{q}_{max,i} \leq f'_i(s)\dot{s} \leq \dot{q}_{max,i}$$
+# $$-\ddot{q}_{max,i} \leq f'_i(s)\ddot{s} + f''_i(s)\dot{s}^2 \leq \ddot{q}_{max,i}$$
 
 # %% [markdown]
-# ### 3.2 (s, ṡ) 相平面
-#
-# 将路径问题转化为二维 $(s, \dot{s})$ 空间中的问题：
-# - 横轴 $s \in [0,1]$：沿路径的进度
-# - 纵轴 $\dot{s}$：进度速率
-# - 可行域 = 满足所有关节速度/加速度约束的 $(s, \dot{s})$ 区域
-# - MVC（Maximum Velocity Curve）= 可行域的上边界
+# ## 4. TOPP 相平面算法 ⭐
 
 # %% [markdown]
-# ## 4. TOPP 算法核心思想
+# ### 4.1 MVC (Maximum Velocity Curve)
+# 对每个 $s$，从关节速度约束求 $\dot{s}$ 上限:
+# $$\dot{s}_{max}(s) = \min_i \frac{\dot{q}_{max,i}}{|f'_i(s)|}$$
+# 若 $f'_i(s) = 0$，该关节对 $\dot{s}$ 无约束。
 
 # %% [markdown]
-# ### 4.1 时间最优解的特征
-#
-# 时间最优轨迹一定贴着约束边界运动（bang-bang 原理）：
-# - 要么以最大速度运动（在 MVC 上）
-# - 要么以最大加速度加速、最大减速度减速
-#
-# ### 4.2 两遍积分
-#
-# 1. **前向积分**（从 $s=0$ 开始，$\dot{s}=0$）：用最大加速度加速，不超出 MVC
-# 2. **后向积分**（从 $s=1$ 开始，$\dot{s}=0$）：用最大减速度减速，不超出 MVC
-# 3. 两条曲线围成的下包络 = 时间最优 $\dot{s}(s)$ 曲线
+# ### 4.2 加速度约束下的可行加速/减速
+# 从 $\ddot{q}_{min} \leq f'\ddot{s} + f''\dot{s}^2 \leq \ddot{q}_{max}$:
+# $$\alpha_i(s, \dot{s}) = \begin{cases}
+# (\ddot{q}_{min,i} - f''_i\dot{s}^2)/f'_i & f'_i > 0 \\
+# (\ddot{q}_{max,i} - f''_i\dot{s}^2)/f'_i & f'_i < 0
+# \end{cases}$$
+# $$\beta_i(s, \dot{s}) = \begin{cases}
+# (\ddot{q}_{max,i} - f''_i\dot{s}^2)/f'_i & f'_i > 0 \\
+# (\ddot{q}_{min,i} - f''_i\dot{s}^2)/f'_i & f'_i < 0
+# \end{cases}$$
+# $$\alpha = \max_i \alpha_i, \quad \beta = \min_i \beta_i$$
+
+# %% [markdown]
+# ### 4.3 前向 + 后向积分
+# 1. 前向传播 (最大加速): 从 $(0, \dot{s}_0)$ 开始，用 $\beta(s, \dot{s})$ 加速
+# 2. 后向传播 (最大减速): 从 $(1, \dot{s}_f)$ 开始，用 $\alpha(s, \dot{s})$ 减速
+# 3. 下包络 = 时间最优 $\dot{s}(s)$
+# 4. 使用 $\dot{s}_{k+1}^2 = \dot{s}_k^2 + 2\ddot{s}\Delta s$ (稳定递推)
 
 # %% [markdown]
 # ## 5. Python 实现
@@ -80,143 +72,153 @@
 # %%
 import numpy as np
 import matplotlib.pyplot as plt
-import sys
-sys.path.insert(0, '..')
+import sys; sys.path.insert(0, '..')
+from scipy.interpolate import CubicSpline
 %matplotlib inline
+rng = np.random.RandomState(42)
 print("✅ 导入完成")
 
 # %% [markdown]
-# ### 5.1 2R 臂路径的 MVC 计算
+# ### 5.1 一般路径 TOPP — 2R 臂样条路径
 
 # %%
-# 定义一条从 q_start 到 q_goal 的直线路径（在关节空间）
-q_start = np.array([0.0, 0.0])
-q_goal = np.array([np.pi/2, np.pi/3])
-n_s = 200
-s_grid = np.linspace(0, 1, n_s)
+# 路径: 三次样条连接关节空间中的 via-points
+via_pts = np.array([
+    [0.0, 0.0],
+    [0.5, -0.3],
+    [1.2, 0.2],
+    [0.8, 0.6],
+    [1.5, 1.0],
+])
+s_grid = np.linspace(0, 1, len(via_pts))
+cs1 = CubicSpline(s_grid, via_pts[:, 0], bc_type='natural')
+cs2 = CubicSpline(s_grid, via_pts[:, 1], bc_type='natural')
 
-# 路径 f(s) = (1-s)*q_start + s*q_goal (直线)
-def path(s):
-    return (1-s)*q_start + s*q_goal
+n_s = 300
+s_vals = np.linspace(0, 1, n_s)
+ds = s_vals[1] - s_vals[0]
 
-def path_deriv(s):
-    return q_goal - q_start  # f'(s) = constant for linear path
+# f(s), f'(s), f''(s)
+f_vals = np.column_stack([cs1(s_vals), cs2(s_vals)])
+fp_vals = np.column_stack([cs1(s_vals, 1), cs2(s_vals, 1)])
+fpp_vals = np.column_stack([cs1(s_vals, 2), cs2(s_vals, 2)])
 
-# 计算 MVC（速度约束）
-q_dot_max = np.array([3.0, 4.0])  # 各关节最大速度
-s_dot_max_speed = np.full(n_s, np.inf)
-
-for i in range(n_s):
-    fp = path_deriv(s_grid[i])
-    for d in range(2):
-        if abs(fp[d]) > 1e-10:
-            s_dot_max_speed[i] = min(s_dot_max_speed[i], q_dot_max[d] / abs(fp[d]))
-
-# 加速度约束简化处理
+# 关节约束
+q_dot_max = np.array([3.0, 4.0])
 q_ddot_max = np.array([8.0, 10.0])
 
-# %% [markdown]
-# ### 5.2 前向 + 后向积分
+# === MVC: 速度约束 ===
+s_dot_mvc = np.full(n_s, np.inf)
+for i in range(n_s):
+    for d in range(2):
+        if abs(fp_vals[i, d]) > 1e-10:
+            s_dot_mvc[i] = min(s_dot_mvc[i], q_dot_max[d] / abs(fp_vals[i, d]))
 
-# %%
-# 简化版 TOPP：从前向后和从后向前扫描
-s_dot_fwd = np.zeros(n_s)
-s_dot_fwd[0] = 0.0
+# === 加速度约束 → α(s,ṡ), β(s,ṡ) ===
+def compute_alpha_beta(s_idx, s_dot_val):
+    """计算给定 (s, ṡ) 处的加速度约束 α ≤ s̈ ≤ β"""
+    alpha = -np.inf; beta = np.inf
+    for d in range(2):
+        fp = fp_vals[s_idx, d]; fpp = fpp_vals[s_idx, d]
+        if abs(fp) < 1e-10: continue
+        term = fpp * s_dot_val**2
+        lo = (-q_ddot_max[d] - term) / fp
+        hi = (q_ddot_max[d] - term) / fp
+        if fp > 0:
+            alpha = max(alpha, lo); beta = min(beta, hi)
+        else:
+            alpha = max(alpha, hi); beta = min(beta, lo)
+    return alpha, beta
 
-# 前向：用加速度上限加速
+# === 前向传播 (最大加速) ===
+s_dot_fwd = np.zeros(n_s); s_dot_fwd[0] = 0.0
 for i in range(1, n_s):
-    ds = s_grid[i] - s_grid[i-1]
-    # 最大允许加速度产生的速率
-    s_ddot_max_val = np.inf
-    fp = path_deriv(s_grid[i])
-    for d in range(2):
-        if abs(fp[d]) > 1e-10:
-            # s̈ ≤ (q̈_max - f'' ṡ²)/f'（此处 f''=0 因为直线路径）
-            s_ddot_max_val = min(s_ddot_max_val, q_ddot_max[d] / abs(fp[d]))
-    # 欧拉积分
-    s_dot_possible = s_dot_fwd[i-1] + s_ddot_max_val * ds / max(s_dot_fwd[i-1], 1e-3)
-    s_dot_fwd[i] = min(s_dot_possible, s_dot_max_speed[i])
+    _, beta = compute_alpha_beta(i-1, s_dot_fwd[i-1])
+    # s_dot_{k+1}² = s_dot_k² + 2 * s̈ * Δs (稳定递推)
+    s_dot_sq = s_dot_fwd[i-1]**2 + 2 * max(beta, 0) * ds
+    s_dot_fwd[i] = np.sqrt(max(0, s_dot_sq))
+    s_dot_fwd[i] = min(s_dot_fwd[i], s_dot_mvc[i])
 
-# 后向
-s_dot_bwd = np.zeros(n_s)
-s_dot_bwd[-1] = 0.0
+# === 后向传播 (最大减速) ===
+s_dot_bwd = np.zeros(n_s); s_dot_bwd[-1] = 0.0
 for i in range(n_s-2, -1, -1):
-    ds = s_grid[i+1] - s_grid[i]
-    s_ddot_max_val = np.inf
-    fp = path_deriv(s_grid[i])
-    for d in range(2):
-        if abs(fp[d]) > 1e-10:
-            s_ddot_max_val = min(s_ddot_max_val, q_ddot_max[d] / abs(fp[d]))
-    s_dot_possible = s_dot_bwd[i+1] + s_ddot_max_val * ds / max(s_dot_bwd[i+1], 1e-3)
-    s_dot_bwd[i] = min(s_dot_possible, s_dot_max_speed[i])
+    alpha, _ = compute_alpha_beta(i+1, s_dot_bwd[i+1])
+    # s_dot_k² = s_dot_{k+1}² - 2 * s̈ * Δs (向后积分)
+    s_dot_sq = s_dot_bwd[i+1]**2 - 2 * min(alpha, 0) * ds
+    s_dot_bwd[i] = np.sqrt(max(0, s_dot_sq))
+    s_dot_bwd[i] = min(s_dot_bwd[i], s_dot_mvc[i])
 
-# 时间最优 = min(前向, 后向, MVC)
-s_dot_opt = np.minimum(np.minimum(s_dot_fwd, s_dot_bwd), s_dot_max_speed)
+# === 时间最优 = min(前向, 后向, MVC) ===
+s_dot_opt = np.minimum(np.minimum(s_dot_fwd, s_dot_bwd), s_dot_mvc)
 
-# 对比均匀时间参数化
-s_dot_uniform = np.full(n_s, np.mean(s_dot_opt[s_dot_opt > 0]))  # 常数速率
+# === 从 ṡ(s) 计算 q(t) ===
+t_path = np.zeros(n_s)
+for i in range(1, n_s):
+    s_dot_avg = max((s_dot_opt[i] + s_dot_opt[i-1]) / 2, 1e-6)
+    t_path[i] = t_path[i-1] + ds / s_dot_avg
 
-# 计算总时间
-T_opt = np.trapezoid(1.0 / (s_dot_opt + 1e-6), s_grid)
-T_uniform = np.trapezoid(1.0 / (s_dot_uniform + 1e-6), s_grid)
+# 对比: 均匀时间参数化
+s_dot_uniform = np.full(n_s, np.mean(s_dot_opt[s_dot_opt > 1e-3]))
+t_uniform = np.zeros(n_s)
+for i in range(1, n_s):
+    t_uniform[i] = t_uniform[i-1] + ds / s_dot_uniform[i]
 
 # %% [markdown]
-# ### 5.3 相平面可视化
+# ### 5.2 可视化
 
 # %%
-fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(14, 6))
+fig, axes = plt.subplots(2, 2, figsize=(14, 10))
 
 # (s, ṡ) 相平面
-ax1.fill_between(s_grid, 0, s_dot_max_speed, color='green', alpha=0.1, label='Feasible Region')
-ax1.plot(s_grid, s_dot_max_speed, 'k-', linewidth=2, label='MVC (Max Velocity Curve)')
-ax1.plot(s_grid, s_dot_fwd, 'b--', linewidth=1.5, label='Forward Pass')
-ax1.plot(s_grid, s_dot_bwd, 'r--', linewidth=1.5, label='Backward Pass')
-ax1.plot(s_grid, s_dot_opt, 'purple', linewidth=2.5, label='Optimal ṡ(s)')
-ax1.plot(s_grid, s_dot_uniform, 'orange', linewidth=1.5, alpha=0.7, label='Uniform ṡ')
-ax1.set_xlabel('Path Progress s'); ax1.set_ylabel('ṡ')
-ax1.set_title('(s, ṡ) Phase Plane — TOPP')
-ax1.legend(fontsize=8); ax1.grid(True, alpha=0.3)
+axes[0,0].fill_between(s_vals, 0, s_dot_mvc, color='lightgreen', alpha=0.3, label='Feasible')
+axes[0,0].plot(s_vals, s_dot_mvc, 'k-', linewidth=2, label='MVC')
+axes[0,0].plot(s_vals, s_dot_fwd, 'b--', linewidth=1.5, label='Forward pass')
+axes[0,0].plot(s_vals, s_dot_bwd, 'r--', linewidth=1.5, label='Backward pass')
+axes[0,0].plot(s_vals, s_dot_opt, 'purple', linewidth=2.5, label='Optimal ṡ(s)')
+axes[0,0].plot(s_vals, s_dot_uniform, 'orange', linewidth=1, alpha=0.7, label='Uniform ṡ')
+axes[0,0].set_xlabel('s'); axes[0,0].set_ylabel('ṡ')
+axes[0,0].set_title('(s, ṡ) Phase Plane — TOPP'); axes[0,0].legend(fontsize=8); axes[0,0].grid(True, alpha=0.3)
 
-# 时间对比
-# 模拟两种参数化的 q₁(t) 轨迹
-t_opt_vals = np.zeros(n_s)
-t_unif_vals = np.zeros(n_s)
-t_opt_vals[0] = 0; t_unif_vals[0] = 0
-for i in range(1, n_s):
-    ds = s_grid[i] - s_grid[i-1]
-    t_opt_vals[i] = t_opt_vals[i-1] + ds / max(s_dot_opt[i], 1e-6)
-    t_unif_vals[i] = t_unif_vals[i-1] + ds / s_dot_uniform[i]
+# q₁(t) 对比
+q_opt = np.column_stack([cs1(s_vals), cs2(s_vals)])
+axes[0,1].plot(t_path, q_opt[:,0], 'purple', linewidth=2, label=f'TOPP (T={t_path[-1]:.3f}s)')
+axes[0,1].plot(t_uniform, q_opt[:,0], 'orange', linewidth=2, label=f'Uniform (T={t_uniform[-1]:.3f}s)')
+axes[0,1].set_xlabel('t (s)'); axes[0,1].set_ylabel('q₁ (rad)')
+axes[0,1].set_title(f'Joint 1: TOPP saves {(1-t_path[-1]/t_uniform[-1])*100:.1f}% time'); axes[0,1].legend(); axes[0,1].grid(True, alpha=0.3)
 
-q_opt = np.array([path(s) for s in s_grid])
-ax2.plot(t_opt_vals, q_opt[:, 0], 'b-', linewidth=2, label=f'q₁ (Optimal, T={T_opt:.3f}s)')
-ax2.plot(t_unif_vals, q_opt[:, 0], 'orange', linewidth=2, label=f'q₁ (Uniform, T={T_uniform:.3f}s)')
-ax2.set_xlabel('Time t (s)'); ax2.set_ylabel('q₁ (rad)')
-ax2.set_title(f'Time Comparison: Optimal saves {(T_uniform-T_opt)/T_uniform*100:.0f}% time')
-ax2.legend(); ax2.grid(True, alpha=0.3)
+# 速度
+q_dot_opt = fp_vals * s_dot_opt[:, None]  # q̇ = f'(s)ṡ
+axes[1,0].plot(t_path, q_dot_opt[:,0], 'purple', linewidth=1.5, label='q̇₁ (TOPP)')
+axes[1,0].plot(t_path, q_dot_opt[:,1], 'g-', linewidth=1.5, label='q̇₂ (TOPP)')
+axes[1,0].axhline(y=q_dot_max[0], c='k', ls='--', alpha=0.3)
+axes[1,0].axhline(y=-q_dot_max[0], c='k', ls='--', alpha=0.3)
+axes[1,0].set_xlabel('t (s)'); axes[1,0].set_ylabel('q̇ (rad/s)')
+axes[1,0].set_title('Joint Velocities (within limits)'); axes[1,0].legend(); axes[1,0].grid(True, alpha=0.3)
+
+# 路径 q₁ vs q₂
+axes[1,1].plot(q_opt[:,0], q_opt[:,1], 'b-', linewidth=2, label='Geometric path')
+axes[1,1].scatter(via_pts[:,0], via_pts[:,1], c='red', s=50, zorder=5, label='Via points')
+axes[1,1].set_xlabel('q₁ (rad)'); axes[1,1].set_ylabel('q₂ (rad)')
+axes[1,1].set_title('Path in Joint Space'); axes[1,1].set_aspect('equal'); axes[1,1].legend(); axes[1,1].grid(True, alpha=0.3)
 
 plt.tight_layout()
-plt.savefig('../outputs/14_topp_phase_plane.png', dpi=100, bbox_inches='tight')
+plt.savefig('../outputs/14_topp_general_path.png', dpi=100, bbox_inches='tight')
 plt.show()
+
+print(f"TOPP 总时间: {t_path[-1]:.3f}s, 均匀时间: {t_uniform[-1]:.3f}s")
+print(f"时间节省: {(1-t_path[-1]/t_uniform[-1])*100:.1f}%")
 
 # %% [markdown]
 # ## 6. 练习题
-#
-# ### 概念题
-# 1. 路径 vs 轨迹 vs 时间参数化：三者的关系是什么？
-# 2. MVC 曲线由什么约束决定？
-#
-# ### 编程题
-# 1. 修改上述代码，将直线路径替换为圆弧路径（带 $f''$ 非零项）。
-# 2. 加入简化的关节力矩约束。
-#
-# > 答案见 `solutions/14_solutions.ipynb`
+# 1. MVC 曲线由什么约束决定？TOPP 如何保证不超出 MVC？
+# 2. 为什么前向和后向积分都需要？只用前向会有什么问题？
+# 3. 加入力矩约束后, $\alpha(s,\dot{s})$ 和 $\beta(s,\dot{s})$ 的新形式？
 
 # %% [markdown]
 # ## 7. 本节总结
-#
 # | 概念 | 公式 | 含义 |
 # |------|------|------|
-# | 链式分解 | $\ddot{\mathbf{q}} = \mathbf{f}'\ddot{s} + \mathbf{f}''\dot{s}^2$ | 路径导数 + 速率导数 |
-# | MVC | $\dot{s}_{max}(s)$ 从速度/加速度约束计算 | 可行域上界 |
-# | 时间最优 | 贴着 MVC 边界运动 | bang-bang 原理 |
-| 总时间 | $T = \int_0^1 \frac{ds}{\dot{s}(s)}$ | ṡ 越大越快 |
+# | 链式分解 | $\ddot{\mathbf{q}} = \mathbf{f}'\ddot{s} + \mathbf{f}''\dot{s}^2$ | $\ddot{s}$ + $\dot{s}^2$ 分别贡献 |
+# | MVC | $\dot{s}_{max}(s) = \min_i \dot{q}_{max,i}/|f'_i(s)|$ | 速度硬上限 |
+# | 加速度约束 | $\alpha(s,\dot{s}) \leq \ddot{s} \leq \beta(s,\dot{s})$ | 从关节加速度反推 |
+# | 稳定递推 | $\dot{s}_{k+1}^2 = \dot{s}_k^2 + 2\ddot{s}\Delta s$ | 避免 $\dot{s} \approx 0$ 不稳定 |

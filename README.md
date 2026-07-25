@@ -101,37 +101,61 @@ roboticsselflearning/
 └── scripts/                     ← 验证和同步脚本
 ```
 
-## Notebook 索引
+## Notebook 索引 (45 篇)
 
-| # | 文件名 | 标题 | 核心内容 | 天 |
-|---|--------|------|----------|:--:|
-| 00 | 00_course_guide | 课程导航指南 | 课程结构、使用说明、符号约定 | - |
-| 01 | 01_linear_algebra_review | 线性代数复习 | 向量、矩阵、SVD、伪逆、最小二乘 | 1 |
-| 02 | 02_coordinate_frames | 坐标系与刚体运动 | 齐次变换、基变换、主动/被动旋转 | 2 |
-| 03 | 03_rotation_representations | 旋转的多种表示 | 欧拉角、轴角、万向锁、罗德里格斯公式 | 3 |
-| 04 | 04_quaternions_lie | 四元数与李群基础 | 单位四元数、SO(3)/SE(3)、指数/对数映射 | 4 |
-| 05 | 05_forward_kinematics | 正运动学 (FK) | DH 参数、FK 计算、ipywidgets 交互臂 | 5 |
-| 06 | 06_inverse_kinematics | 逆运动学 (IK) | 几何法、代数法、数值法、DLS | 6 |
-| 07 | 07_jacobian_statics | 雅可比与静力学 | 几何/解析雅可比、速度/力传播、虚功原理 | 8 |
-| 08 | 08_singularity_manipulability | 奇异性与可操作度 | 可操作度椭球、条件数、奇异预警 | 9 |
-| 09 | 09_10_dynamics | 动力学与拉格朗日法 | M/C/g 结构、2R 臂推导、SymPy 验证 | 10 |
-| 10 | 11_newton_euler | 牛顿-欧拉动力学 | RNEA 递推、O(n) 复杂度、CRBA | 11 |
-| 11 | 12_advanced_dynamics | 高级动力学专题 | 参数辨识 τ=Yθ、约束、接触、浮动基 | 12 |
-| 12 | 13_trajectory_generation | 轨迹生成 | 梯形/五次多项式/样条、Path vs Trajectory | 15 |
-| 13 | 14_time_parameterization | 时间参数化 | TOPP、(s,ṡ) 相平面、MVC | 16 |
-| 14 | 15_motion_planning_basics | 运动规划基础 | C-空间、A*、Dijkstra、势场法 | 17 |
-| 15 | 16_sampling_planning | 采样运动规划 | PRM、RRT、RRT*、2R 臂 C-space 规划 | 18 |
-| 16 | 17_joint_control | 关节空间控制 | PID、重力补偿 PD、李雅普诺夫稳定性证明 | 19 |
-| 17 | 18_computed_torque | 计算力矩控制 | CTC、反馈线性化、滑模控制 | 20 |
-| 18 | 19_operational_space | 操作空间控制 | 零空间投影、RMRC、任务优先级 | 22 |
-| 19 | 20_force_impedance | 力/阻抗/导纳控制 | 阻抗 vs 导纳、混合力控、无源性 | 23 |
-| 20 | 21_state_estimation_basics | 概率与状态估计基础 | 贝叶斯滤波、高斯分布、协方差传播 | 24 |
-| 21 | 22_kalman_filter | 卡尔曼滤波 (KF) | 预测-更新、卡尔曼增益、可观测性 | 25 |
-| 22 | 23_ekf_particle_filter | EKF 与粒子滤波 | EKF 线性化、SIR 粒子滤波、全局定位 | 26 |
-| 23 | 24_sensor_fusion | 传感器模型与融合 | IMU/编码器/视觉、多传感器异步 EKF | 27 |
-| 24 | 25_integrated_project | 综合项目 | 完整闭环：RRT→轨迹→CTC→EKF→仿真 | 28-29 |
-| 25 | 26_interview_review | 面试系统复习 | 50+ 题、核心公式速查表、自测框架 | 30 |
-| — | solutions_week1~4 | 练习解答 (4 册) | 全部练习题的手算+编程答案 | — |
+### 核心课程 (26 篇)
+
+| # | 文件 | 标题 | 天 |
+|---|------|------|:--:|
+| 00 | 00_course_guide | 课程导航指南 | - |
+| 01 | 01_linear_algebra_review | 线性代数复习 | 1 |
+| 02 | 02_coordinate_frames | 坐标系与刚体运动 | 2 |
+| 03 | 03_rotation_representations | 旋转的多种表示 | 3 |
+| 04 | 04_quaternions_lie | 四元数与李群基础 | 4 |
+| 05 | 05_forward_kinematics | 正运动学 (DH) | 5 |
+| 06 | 06_inverse_kinematics | 逆运动学 (IK) | 6 |
+| 07 | 07_jacobian_statics | 雅可比与静力学 | 8 |
+| 08 | 08_singularity_manipulability | 奇异性与可操作度 | 9 |
+| 09 | 09_10_dynamics | 动力学与拉格朗日法 | 10 |
+| 10 | 11_newton_euler | 牛顿-欧拉动力学 | 11 |
+| 11 | 12_advanced_dynamics | 高级动力学专题 | 12 |
+| 12 | 13_trajectory_generation | 轨迹生成 | 15 |
+| 13 | 14_time_parameterization | 时间参数化 (TOPP) | 16 |
+| 14 | 15_motion_planning_basics | 运动规划基础 | 17 |
+| 15 | 16_sampling_planning | 采样运动规划 | 18 |
+| 16 | 17_joint_control | 关节空间控制 | 19 |
+| 17 | 18_computed_torque | 计算力矩控制 | 20 |
+| 18 | 19_operational_space | 操作空间控制 | 22 |
+| 19 | 20_force_impedance | 力/阻抗/导纳控制 | 23 |
+| 20 | 21_state_estimation_basics | 概率与状态估计基础 | 24 |
+| 21 | 22_kalman_filter | 卡尔曼滤波 (KF) | 25 |
+| 22 | 23_ekf_particle_filter | EKF 与粒子滤波 | 26 |
+| 23 | 24_sensor_fusion | 传感器融合 | 27 |
+| 24 | 25_integrated_project | 综合项目 | 28-29 |
+| 25 | 26_interview_review | 面试系统复习 | 30 |
+
+### 扩展课程 (15 篇)
+
+| 文件 | 标题 | 类别 |
+|------|------|------|
+| 04b_se3_twists_adjoint | SE(3)/Twist/Wrench/Adjoint | Lie 群 |
+| 05b_product_of_exponentials | PoE 正运动学 | 运动学 |
+| 05c_mobile_robot_kinematics | 移动机器人运动学 | 移动机器人 |
+| 06b_numerical_optimization | 数值优化基础 | 优化 |
+| 07b_acceleration_kinematics | 加速度运动学 | 运动学 |
+| 09b_rigid_body_inertia | 刚体惯性 | 动力学 |
+| 12c_contact_dynamics | 接触与碰撞动力学 | 动力学 |
+| 16b_trajectory_optimization | 轨迹优化 | 规划 |
+| 16c_kinodynamic_planning | Kinodynamic 规划 | 规划 |
+| 17b_state_space_lqr | 状态空间与 LQR | 控制 |
+| 18b_mpc_adaptive_ilc | MPC/自适应/ILC | 控制 |
+| 23b_error_state_kalman_filter | ESKF | 状态估计 |
+| 23c_imu_preintegration | IMU 预积分 | 状态估计 |
+| 24b_camera_geometry | 相机几何 | 感知 |
+| 24c_pnp_icp_slam | PnP/ICP/SLAM | 感知 |
+
+### 练习解答 (4 册)
+| solutions_week1~4 | 四册练习解答 | — |
 
 ---
 

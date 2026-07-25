@@ -27,3 +27,8 @@ dev = [
     "nbclient",
     "nbconvert",
 ]
+
+[tool.jupytext]
+formats = "notebooks//ipynb,notebook_sources//py:percent"
+notebook_metadata_filter = "-all"
+cell_metadata_filter = "-all"
