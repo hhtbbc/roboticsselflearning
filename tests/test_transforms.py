@@ -224,15 +224,33 @@ class TestLieGroup:
         assert np.allclose(T[:3, 3], twist[3:])
 
     def test_se3_log_roundtrip(self):
-        """se3_log(se3_exp(twist)) ≈ twist"""
-        for _ in range(10):
-            twist = RNG.uniform(-1, 1, 6)
-            twist[:3] *= 0.5  # limit rotation
+        """se3_log(se3_exp(twist)) ≈ twist — 全六维测试"""
+        for _ in range(20):
+            twist = RNG.uniform(-1.5, 1.5, 6)
+            twist[:3] *= 0.5  # 限制旋转角 < π
             T = se3_exp(twist)
             twist2 = se3_log(T)
-            # 旋转部分应在 2π 等价内一致
-            assert np.allclose(so3_exp(twist[:3]) @ np.array([1,0,0]),
-                              so3_exp(twist2[:3]) @ np.array([1,0,0]), atol=1e-6)
+            # 旋转部分
+            assert np.allclose(so3_exp(twist[:3]) @ np.array([1.,0.,0.]),
+                              so3_exp(twist2[:3]) @ np.array([1.,0.,0.]), atol=1e-6)
+            # 平移部分：v = J_l^{-1}(ω)·p，往返应一致
+            assert np.allclose(twist[3:], twist2[3:], atol=1e-6), \
+                f"v error: {np.linalg.norm(twist[3:]-twist2[3:]):.2e}"
+
+    def test_se3_log_pure_translation(self):
+        """纯平移: se3_log(se3_exp([0; v])) = [0; v]"""
+        v = RNG.uniform(-5, 5, 3)
+        twist = np.concatenate([np.zeros(3), v])
+        T = se3_exp(twist)
+        twist2 = se3_log(T)
+        assert np.allclose(twist, twist2, atol=1e-10)
+
+    def test_se3_log_small_angle(self):
+        """小角度: se3_log(se3_exp(ε)) ≈ ε"""
+        twist = np.array([0.001, -0.002, 0.0015, 0.01, 0.02, -0.01])
+        T = se3_exp(twist)
+        twist2 = se3_log(T)
+        assert np.allclose(twist, twist2, atol=1e-6)
 
     def test_adjoint_consistency(self):
         """Ad_{T1 T2} = Ad_{T1} Ad_{T2}"""

@@ -409,20 +409,37 @@ def se3_log(T: np.ndarray) -> np.ndarray:
 
     返回:
         twist: 6×1 [omega; v] ∈ se(3)
+
+    公式: v = J_l^{-1}(ω) · p, 其中 J_l^{-1} 是 SO(3) 左雅可比逆。
+
+    J_l^{-1}(ω) = I - ½Ω + α·Ω²
+    α = 1/θ² - (1+cosθ)/(2θ sinθ)
+    当 θ→0: α → 1/12
     """
     R = T[:3, :3]
     p = T[:3, 3]
     omega = so3_log(R)
     theta = np.linalg.norm(omega)
 
-    if theta < 1e-10:
-        return np.concatenate([np.zeros(3), p])
+    if theta < 1e-8:
+        return np.concatenate([omega, p])
 
     axis = omega / theta
-    K = skew(axis)
-    # 左雅可比逆: V^{-1} = I - θ/2·K + (1 - θ·cot(θ/2)/(2θ))·K²
-    cot_half = np.cos(theta/2) / np.sin(theta/2)
-    V_inv = (np.eye(3) - theta/2 * K
-             + (1 - theta * cot_half / 2) / theta * (K @ K))
-    v = V_inv @ p
+
+    # J_l^{-1}(ω) = I - ½[ω]× + α·[ω]×²  (Barfoot Eq 7.150)
+    # where [ω]× = θ·[axis]× = θ·K
+    Omega = skew(omega)         # [ω]×, NOT unit axis skew
+    Omega2 = Omega @ Omega
+
+    sin_t = np.sin(theta)
+    if theta < 0.01:
+        # Small-angle Taylor to avoid 1/θ² cancellation
+        theta2 = theta * theta
+        alpha = 1.0/12.0 + theta2/720.0 + theta2*theta2/30240.0
+    else:
+        alpha = 1.0 / (theta * theta) - (1.0 + np.cos(theta)) / (2.0 * theta * sin_t)
+
+    Jl_inv = np.eye(3) - 0.5 * Omega + alpha * Omega2
+    v = Jl_inv @ p
+
     return np.concatenate([omega, v])

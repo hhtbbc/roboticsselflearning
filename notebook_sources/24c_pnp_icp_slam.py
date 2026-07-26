@@ -85,28 +85,35 @@ t_icp_true = np.array([0.5, 0.2, 0.0])
 cloud_A = rng.uniform(-1, 1, (100, 3))
 cloud_B = np.array([R_icp_true @ p + t_icp_true + rng.normal(0, 0.02, 3) for p in cloud_A])
 
-# ICP 迭代
+# ICP 迭代 (point-to-point, 已知对应关系)
 R_icp = np.eye(3); t_icp = np.zeros(3)
 err_icp_hist = []
-for it in range(20):
-    # 1. 最近邻关联 (简化：已知对应)
-    A_matched = cloud_A
-    B_target = np.array([R_icp @ p + t_icp for p in cloud_A])
-    residuals = cloud_B - B_target
 
-    # 2. 最小化 Σ||Rp_i + t - q_i||² → SVD 求最优 R, t
-    centroid_A = np.mean(cloud_A, axis=0)
+for it in range(30):
+    # 1. 用当前估计变换源点云
+    A_transformed = np.array([R_icp @ p + t_icp for p in cloud_A])
+
+    # 2. 最近邻关联 (简化：假设对应关系已知)
+    residuals = cloud_B - A_transformed
+    err_icp_hist.append(np.mean(np.linalg.norm(residuals, axis=1)))
+
+    # 3. 求解增量变换 ΔR, Δt: min Σ||ΔR·a_i + Δt - b_i||²
+    centroid_A = np.mean(A_transformed, axis=0)
     centroid_B = np.mean(cloud_B, axis=0)
-    H = (cloud_A - centroid_A).T @ (cloud_B - centroid_B)
+    H = (A_transformed - centroid_A).T @ (cloud_B - centroid_B)
     U, _, Vt = np.linalg.svd(H)
     R_delta = Vt.T @ U.T
     if np.linalg.det(R_delta) < 0:
         Vt[-1] *= -1; R_delta = Vt.T @ U.T
     t_delta = centroid_B - R_delta @ centroid_A
 
+    # 4. 组合增量
     R_icp = R_delta @ R_icp
     t_icp = R_delta @ t_icp + t_delta
-    err_icp_hist.append(np.mean(np.linalg.norm(residuals, axis=1)))
+
+    # 收敛判断
+    if it > 2 and abs(err_icp_hist[-1] - err_icp_hist[-2]) < 1e-8:
+        break
 
 fig, axes = plt.subplots(1, 2, figsize=(14, 6))
 axes[0].scatter(cloud_A[:,0], cloud_A[:,1], c='blue', s=10, alpha=0.5, label='Source (A)')
@@ -142,23 +149,34 @@ for i in range(1, n_poses):
 # 回环测量
 loop_closure = poses_true[-1] - poses_true[n_poses-1] + rng.normal(0, 0.05)
 
-# 因子图优化：min Σ(pose_j - pose_i - meas_{ij})²
-# 即 solve A x = b
-A_pose = np.zeros((n_poses, n_poses)); b_pose = np.zeros(n_poses)
-A_pose[0, 0] = 1; b_pose[0] = 0  # anchor
+# 因子图优化: min Σ_w · ||x_j - x_i - z_{ij}||²
+# 以 ||Ax - b||² 形式: 对每条边, A 中 x_j 的系数为 +√w, x_i 的系数为 -√w
+n_edges = (n_poses - 1) + 1  # odom edges + loop closure
+A_pose = np.zeros((n_edges, n_poses))
+b_pose = np.zeros(n_edges)
+row = 0
 
+# Odometry edges: x_{i+1} - x_i = odom_i (weight=1)
 for i in range(n_poses - 1):
-    A_pose[i, i] += 1; A_pose[i, i+1] += -1; b_pose[i] += odom[i]
-    A_pose[i+1, i+1] += 1; A_pose[i+1, i] += -1; b_pose[i+1] += -odom[i]
+    A_pose[row, i] = -1.0; A_pose[row, i+1] = 1.0
+    b_pose[row] = odom[i]
+    row += 1
 
-# 回环边: pose[0] - pose[n-1] = loop_closure
-A_pose[0, 0] += 1; A_pose[0, n_poses-1] += -1; b_pose[0] += loop_closure
-A_pose[n_poses-1, n_poses-1] += 1; A_pose[n_poses-1, 0] += -1; b_pose[n_poses-1] += -loop_closure
+# Loop closure: x_0 - x_{n-1} = loop_closure (higher weight)
+w_lc = 4.0  # 回环权重 > 里程计
+A_pose[row, n_poses-1] = -np.sqrt(w_lc)
+A_pose[row, 0] = np.sqrt(w_lc)
+b_pose[row] = np.sqrt(w_lc) * loop_closure
 
-# 固定第一个位姿
-A_pose[0, :] = 0; A_pose[0, 0] = 1; b_pose[0] = 0
+# 固定 anchor: x_0 = 0 (硬约束，通过加一行大权重)
+A_anchor = np.zeros((1, n_poses)); A_anchor[0, 0] = 1000.0
+b_anchor = np.zeros(1)
+A_aug = np.vstack([A_pose, A_anchor])
+b_aug = np.concatenate([b_pose, b_anchor])
 
-poses_opt = np.linalg.solve(A_pose, b_pose)
+# Solve: A^T A x = A^T b
+H = A_aug.T @ A_aug; rhs = A_aug.T @ b_aug
+poses_opt = np.linalg.solve(H, rhs)
 
 fig, ax = plt.subplots(figsize=(10, 5))
 ax.plot(poses_true[:n_poses], 'ko-', linewidth=2, markersize=10, label='Ground Truth')
