@@ -124,8 +124,8 @@ l1, l2 = 1.0, 0.8
 M_2r = homogeneous_transform(np.eye(3), np.array([l1+l2, 0, 0]))
 
 # 螺旋轴 [v; ω]（Lynch & Park 约定）
-S1 = np.array([0, 0, 0, 0, 0, 1])
-S2 = np.array([0, -l1, 0, 0, 0, 1])
+S1 = np.array([0, 0, 1, 0, 0, 0])          # [ω; v] = 绕Z旋转, 轴上点=(0,0,0)
+S2 = np.array([0, 0, 1, 0, -l1, 0])         # [ω; v] = 绕Z旋转, 轴上点=(l1,0,0)
 
 q_test = np.array([np.pi/4, np.pi/3])
 
@@ -147,8 +147,12 @@ from src.robotics_learning.kinematics import compute_geometric_jacobian
 J_dh = compute_geometric_jacobian(np.array([[l1,0,0],[l2,0,0]]), q_test)
 print(f"\nPoE Space Jacobian [ω; v]:\n{np.round(J_poe, 4)}")
 print(f"DH 几何雅可比 [ṗ_E; ω]:\n{np.round(J_dh, 4)}")
-print(f"角速度部分一致? {np.allclose(J_poe[:3], J_dh[3:], atol=1e-10)}")
-print(f"(线速度部分不同：J_poe 的 v 是空间系原点速度, J_dh 上半部是末端点速度)")
+
+# 验证: 角速度部分应一致, FK 应一致
+assert np.allclose(T_poe, T_dh, atol=1e-10), "PoE FK ≠ DH FK!"
+assert np.allclose(J_poe[:3], J_dh[3:], atol=1e-10), "角速度部分不一致!"
+print("✅ PoE FK 与 DH FK 一致, 角速度部分一致")
+print("(线速度部分不同：J_poe 的 v 是空间系原点速度, J_dh 上半部是末端点速度)")
 
 # %% [markdown]
 # ## 7. 练习题

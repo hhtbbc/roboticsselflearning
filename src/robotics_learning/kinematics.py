@@ -32,8 +32,9 @@ def dh_transform(a: float, alpha: float, d: float, theta: float,
     MDH (Modified DH / Khalil-Kleinfinger):
         T_i = R_x(α_{i-1}) · T_x(a_{i-1}) · R_z(θ_i) · T_z(d_i)
         参数下标: a_{i-1}, α_{i-1}, d_i, θ_i。
-        这是 Craig 教材实际使用的约定（Craig 称之为 Modified DH），
-        也是 URDF 的标准。
+        这是 Craig 教材实际使用的约定（Craig 称之为 Modified DH）。
+        注意: URDF 直接描述父子 Link 间的固定变换和关节轴，
+        并不等同于 MDH。DH 模型转 URDF 通常需要额外坐标系或固定关节。
 
     注意：不同的教材可能对"标准 DH"和"改进 DH"使用不同的名称。
     本课程以矩阵乘法顺序为准，不使用模糊的"经典DH"等命名。

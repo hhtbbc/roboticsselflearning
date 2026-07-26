@@ -29,7 +29,7 @@
 # ## 2. 学习目标
 #
 # - ⭐ 掌握 hat (∧) 和 vee (∨) 操作符
-# - ⭐ 理解 twist $\mathcal{V} = [\mathbf{v}; \boldsymbol{\omega}]$ 的物理含义
+# - ⭐ 理解 twist $\mathcal{V} = [\boldsymbol{\omega}; \mathbf{v}]$ 的物理含义
 # - ⭐ 区分 space twist 和 body twist
 # - ⭐ 掌握 SE(3) 指数映射和 twist 的物理意义
 # - ⭐ 掌握 Adjoint 变换
@@ -67,7 +67,7 @@
 # ### 5.1 空间 Twist（Spatial Twist）
 #
 # 刚体运动可视为绕空间系中某个螺旋轴 $\mathcal{S}$ 的旋转+平移。瞬时速度用 twist 描述：
-# $$\mathcal{V}_s = \begin{bmatrix} \mathbf{v}_s \\ \boldsymbol{\omega}_s \end{bmatrix} \in \mathbb{R}^6$$
+# $$\mathcal{V}_s = \begin{bmatrix} \boldsymbol{\omega}_s \\ \mathbf{v}_s \end{bmatrix} \in \mathbb{R}^6$$
 #
 # $\mathbf{v}_s$ 不是物体上某点的线速度，而是**假设物体无限延伸、在空间系原点处**的线速度。
 #
@@ -78,7 +78,7 @@
 # ### 5.2 物体 Twist（Body Twist）
 #
 # 物体 twist 是速度在**物体自身参考系**中的表达：
-# $$\mathcal{V}_b = \begin{bmatrix} \mathbf{v}_b \\ \boldsymbol{\omega}_b \end{bmatrix} = \text{Ad}_{T^{-1}} \mathcal{V}_s$$
+# $$\mathcal{V}_b = \begin{bmatrix} \boldsymbol{\omega}_b \\ \mathbf{v}_b \end{bmatrix} = \text{Ad}_{T^{-1}} \mathcal{V}_s$$
 #
 # 物体 twist 与 SE(3) 的关系：
 # $$\dot{T} = T \mathcal{V}_b^\wedge$$
@@ -86,7 +86,7 @@
 # %% [markdown]
 # ### 5.3 从 Twist 恢复 SE(3) 的指数映射
 #
-# 给定空间 twist $\mathcal{V}_s = [\mathbf{v}_s; \boldsymbol{\omega}_s]$，在时间 $\Delta t$ 后的位姿变化：
+# 给定空间 twist $\mathcal{V}_s = [\boldsymbol{\omega}_s; \mathbf{v}_s]$，在时间 $\Delta t$ 后的位姿变化：
 # $$T(\Delta t) = \exp(\mathcal{V}_s^\wedge \Delta t) T(0)$$
 #
 # 其中 SE(3) 指数映射已经实现在 `se3_exp()` 中（见 NB04）。
@@ -100,13 +100,13 @@
 # 给定 $T = (R, \mathbf{p}) \in SE(3)$，Adjoint 矩阵 $\text{Ad}_T \in \mathbb{R}^{6\times 6}$ 将物体系中的 twist 变换到空间系：
 # $$\mathcal{V}_s = \text{Ad}_T \mathcal{V}_b$$
 #
-# $$\text{Ad}_T = \begin{bmatrix} R & [\mathbf{p}]_\times R \\ 0 & R \end{bmatrix}$$
+# $$\text{Ad}_T = \begin{bmatrix} R & 0 \\ [\mathbf{p}]_\times R & R \end{bmatrix}$$
 
 # %% [markdown]
 # ### 6.2 Wrench 的对偶变换
 #
-# Wrench $\mathcal{F} = [\mathbf{f}; \mathbf{n}]$（力+力矩）按照 Adjoint 的**转置逆**变换：
-# $$\mathcal{F}_s = \text{Ad}_T^{-T} \mathcal{F}_b = \begin{bmatrix} R & 0 \\ [\mathbf{p}]_\times R & R \end{bmatrix} \begin{bmatrix} \mathbf{f}_b \\ \mathbf{n}_b \end{bmatrix}$$
+# Wrench $\mathcal{F} = [\mathbf{n}; \mathbf{f}]$（力+力矩）按照 Adjoint 的**转置逆**变换：
+# $$\mathcal{F}_s = \text{Ad}_T^{-T} \mathcal{F}_b = \begin{bmatrix} R & [\mathbf{p}]_\times R \\ 0 & R \end{bmatrix} \begin{bmatrix} \mathbf{n}_b \\ \mathbf{f}_b \end{bmatrix}$$
 #
 # 这解释了为什么 $\boldsymbol{\tau} = \mathbf{J}^T \mathbf{F}$——雅可比转置本质上是在做 wrench 的 Adjoint 变换。
 
@@ -209,7 +209,7 @@ print(f"ṗ_E ≠ v_s (v_s = v at spatial origin, ṗ_E = v_s + ω×p_E)")
 # ### 8.3 Wrench 变换验证
 
 # %%
-# 末端受外力 F_b = [fx, fy, fz, nx, ny, nz] (在 body 系)
+# 末端受 wrench F_b = [nx, ny, nz, fx, fy, fz] (在 body 系，[n;f] 排列)
 F_b = np.array([10.0, -5.0, 0.0, 0.0, 0.0, 2.0])
 # 转换到空间系
 Ad_invT = adjoint_inv_transpose(T_end)
@@ -228,7 +228,7 @@ print(f"一致? {np.allclose(tau_from_space, tau_from_body, atol=1e-10)}")
 # %%
 # 左扰动: T_new = exp(δξ^∧) · T   (在空间系施加扰动)
 # 右扰动: T_new = T · exp(δξ^∧)   (在物体系施加扰动)
-delta = np.array([0.01, 0, 0, 0, 0, 0.05])  # 小扰动 [v; ω]
+delta = np.array([0, 0, 0.05, 0.01, 0, 0])  # 小扰动 [ω; v]
 Xi = se3_hat(delta)
 
 T_original = T_end.copy()

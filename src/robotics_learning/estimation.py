@@ -51,17 +51,21 @@ class KalmanFilter:
         return self.mu, self.Sigma
 
     def update(self, z: np.ndarray):
-        """更新步"""
-        # 创新（innovation）
-        y = z - self.C @ self.mu
+        """更新步（Joseph 形式协方差，数值稳定性更好）"""
+        y = z - self.C @ self.mu  # innovation
         S = self.C @ self.Sigma @ self.C.T + self.R
 
-        # 卡尔曼增益
-        K = self.Sigma @ self.C.T @ np.linalg.inv(S)
+        # 卡尔曼增益（用 solve 替代 inv）
+        K = np.linalg.solve(S, self.C @ self.Sigma).T  # K = Σ C^T S^{-1}
 
-        # 更新
+        # 均值更新
         self.mu = self.mu + K @ y
-        self.Sigma = (np.eye(self.n) - K @ self.C) @ self.Sigma
+
+        # Joseph 形式协方差: P = (I-KC)P(I-KC)^T + KRK^T
+        I_KH = np.eye(self.n) - K @ self.C
+        self.Sigma = I_KH @ self.Sigma @ I_KH.T + K @ self.R @ K.T
+        # 对称化
+        self.Sigma = 0.5 * (self.Sigma + self.Sigma.T)
 
         return self.mu, self.Sigma, K
 
@@ -112,15 +116,18 @@ class ExtendedKalmanFilter:
         return self.mu, self.Sigma
 
     def update(self, z: np.ndarray):
-        """更新步：在 μ̂_t 处线性化 h"""
+        """更新步：在 μ̂_t 处线性化 h（Joseph 形式）"""
         C_t = self.C_func(self.mu)
 
         y = z - self.h(self.mu)
         S = C_t @ self.Sigma @ C_t.T + self.R
-        K = self.Sigma @ C_t.T @ np.linalg.inv(S)
+        K = np.linalg.solve(S, C_t @ self.Sigma).T  # K = Σ C^T S^{-1}
 
         self.mu = self.mu + K @ y
-        self.Sigma = (np.eye(self.n) - K @ C_t) @ self.Sigma
+        # Joseph 形式: P = (I-KC)P(I-KC)^T + KRK^T
+        I_KH = np.eye(self.n) - K @ C_t
+        self.Sigma = I_KH @ self.Sigma @ I_KH.T + K @ self.R @ K.T
+        self.Sigma = 0.5 * (self.Sigma + self.Sigma.T)
 
         return self.mu, self.Sigma, K
 
