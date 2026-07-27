@@ -319,12 +319,13 @@ def rrt_plan(c_space_free: Callable[[np.ndarray], bool],
         nearest_idx = np.argmin(dists)
         q_near = nodes[nearest_idx].q
 
-        # 向 q_rand 扩展一步
+        # 向 q_rand 扩展一步（不超过 q_rand）
         direction = q_rand - q_near
         dist = np.linalg.norm(direction)
         if dist < 1e-10:
             continue
-        q_new = q_near + step_size * direction / dist
+        eta = min(step_size, dist)
+        q_new = q_near + eta * direction / dist
 
         # 节点碰撞检测
         if not c_space_free(q_new):
@@ -392,12 +393,13 @@ def rrt_star_plan(c_space_free, bounds, start, goal,
         nearest_idx = np.argmin(dists)
         q_near = nodes[nearest_idx].q
 
-        # 向 q_rand 扩展
+        # 向 q_rand 扩展（不超过目标）
         direction = q_rand - q_near
         dist = np.linalg.norm(direction)
         if dist < 1e-10:
             continue
-        q_new = q_near + step_size * direction / dist
+        eta = min(step_size, dist)
+        q_new = q_near + eta * direction / dist
 
         # 节点碰撞检测
         if not c_space_free(q_new):

@@ -135,7 +135,8 @@ s_dot_fwd = np.zeros(n_s); s_dot_fwd[0] = 0.0
 for i in range(1, n_s):
     _, beta = compute_alpha_beta(i-1, s_dot_fwd[i-1])
     # s_dot_{k+1}² = s_dot_k² + 2 * s̈ * Δs (稳定递推)
-    s_dot_sq = s_dot_fwd[i-1]**2 + 2 * max(beta, 0) * ds
+    # beta < 0 意味着必须减速 — 不能截断为0
+    s_dot_sq = s_dot_fwd[i-1]**2 + 2 * beta * ds
     s_dot_fwd[i] = np.sqrt(max(0, s_dot_sq))
     s_dot_fwd[i] = min(s_dot_fwd[i], s_dot_mvc[i])
 
@@ -144,7 +145,8 @@ s_dot_bwd = np.zeros(n_s); s_dot_bwd[-1] = 0.0
 for i in range(n_s-2, -1, -1):
     alpha, _ = compute_alpha_beta(i+1, s_dot_bwd[i+1])
     # s_dot_k² = s_dot_{k+1}² - 2 * s̈ * Δs (向后积分)
-    s_dot_sq = s_dot_bwd[i+1]**2 - 2 * min(alpha, 0) * ds
+    # alpha > 0 意味着加速度存在正下界 — 不能截断为0
+    s_dot_sq = s_dot_bwd[i+1]**2 - 2 * alpha * ds
     s_dot_bwd[i] = np.sqrt(max(0, s_dot_sq))
     s_dot_bwd[i] = min(s_dot_bwd[i], s_dot_mvc[i])
 

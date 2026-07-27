@@ -58,7 +58,7 @@
 # ### 4.2 $\mathfrak{se}(3)$ 上的 hat/vee
 #
 # $$\boldsymbol{\xi}^\wedge = \begin{bmatrix} \boldsymbol{\omega} \\ \mathbf{v} \end{bmatrix}^\wedge = \begin{bmatrix} [\boldsymbol{\omega}]_\times & \mathbf{v} \\ \mathbf{0}^T & 0 \end{bmatrix} \in \mathfrak{se}(3)$$
-# $$\left(\begin{bmatrix} [\boldsymbol{\omega}]_\times & \mathbf{v} \\ \mathbf{0}^T & 0 \end{bmatrix}\right)^\vee = \begin{bmatrix} \mathbf{v} \\ \boldsymbol{\omega} \end{bmatrix}$$
+# $$\left(\begin{bmatrix} [\boldsymbol{\omega}]_\times & \mathbf{v} \\ \mathbf{0}^T & 0 \end{bmatrix}\right)^\vee = \begin{bmatrix} \boldsymbol{\omega} \\ \mathbf{v} \end{bmatrix}$$
 
 # %% [markdown]
 # ## 5. Twist（旋量）⭐
@@ -108,7 +108,8 @@
 # Wrench $\mathcal{F} = [\mathbf{n}; \mathbf{f}]$（力+力矩）按照 Adjoint 的**转置逆**变换：
 # $$\mathcal{F}_s = \text{Ad}_T^{-T} \mathcal{F}_b = \begin{bmatrix} R & [\mathbf{p}]_\times R \\ 0 & R \end{bmatrix} \begin{bmatrix} \mathbf{n}_b \\ \mathbf{f}_b \end{bmatrix}$$
 #
-# 这解释了为什么 $\boldsymbol{\tau} = \mathbf{J}^T \mathbf{F}$——雅可比转置本质上是在做 wrench 的 Adjoint 变换。
+# $\boldsymbol{\tau} = \mathbf{J}^T \mathbf{F}$ 来自虚功原理（$\boldsymbol{\tau}^T\dot{\mathbf{q}} = \mathbf{F}^T\mathbf{V}$），
+# 是速度映射 $\mathbf{V} = \mathbf{J}\dot{\mathbf{q}}$ 的对偶关系。Wrench 更换参考系时还需要 Adjoint 的逆转置。
 
 # %% [markdown]
 # ## 7. Spatial Jacobian vs Body Jacobian
