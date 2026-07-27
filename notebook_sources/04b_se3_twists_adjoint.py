@@ -248,8 +248,8 @@ print("右扰动：δ 在物体系表达 → 影响物体相对于自身的姿�
 # %% [markdown]
 # ## 9. 常见错误
 #
-# 1. **twist 排列不一致**：有些教材用 $[\boldsymbol{\omega}; \mathbf{v}]$。本课程统一用 $[\mathbf{v}; \boldsymbol{\omega}]$（Lynch & Park 约定）。两个排列下 Adjoint 矩阵的结构不同。
-# 2. **空间 twist vs 物体 twist**：$\mathcal{V}_s$ 中 $\mathbf{v}_s$ 不是物体上某点的实际线速度。真实末端线速度 = $\mathbf{v}_s + \boldsymbol{\omega}_s \times \mathbf{p}$。
+# 1. **twist 排列不一致**：本课程统一使用 $[\boldsymbol{\omega}; \mathbf{v}]$（角速度在前，Lynch & Park 约定）。不同教材可能使用相反的排列，混用会导致 Adjoint 和 wrench 变换错误。
+# 2. **空间 twist vs 物体 twist**：$\mathcal{V}_s$ 中 $\mathbf{v}_s$ 不是物体上某点的实际线速度。真实末端线速度 $\dot{\mathbf{p}}_E = \mathbf{v}_s + \boldsymbol{\omega}_s \times \mathbf{p}_E$。
 # 3. **Adjoint vs 坐标变换**：$\text{Ad}_T$ 将 twist/wrench 在坐标系间映射，不是简单的 $\mathbb{R}^6$ 旋转。
 
 # %% [markdown]

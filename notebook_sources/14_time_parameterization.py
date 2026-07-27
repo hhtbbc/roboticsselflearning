@@ -207,8 +207,15 @@ plt.tight_layout()
 plt.savefig('../outputs/14_topp_general_path.png', dpi=100, bbox_inches='tight')
 plt.show()
 
-print(f"TOPP 总时间: {t_path[-1]:.3f}s, 均匀时间: {t_uniform[-1]:.3f}s")
-print(f"时间节省: {(1-t_path[-1]/t_uniform[-1])*100:.1f}%")
+# 可行性验证: 检查最优曲线的实际 q̇, q̈ 是否满足约束
+q_dot_actual = fp_vals * s_dot_opt[:, None]
+# q̈ = f'(s)s̈ + f''(s)ṡ² — 近似 s̈ 由 ṡ 差分得到
+s_ddot_approx = np.gradient(s_dot_opt, ds)
+q_ddot_actual = fp_vals * s_ddot_approx[:, None] + fpp_vals * s_dot_opt[:, None]**2
+v_ok = np.all(np.abs(q_dot_actual) <= q_dot_max * 1.01, axis=1)
+a_ok = np.all(np.abs(q_ddot_actual) <= q_ddot_max * 1.01, axis=1)
+print(f"TOPP 总时间: {t_path[-1]:.3f}s, 均匀: {t_uniform[-1]:.3f}s, 节省: {(1-t_path[-1]/t_uniform[-1])*100:.1f}%")
+print(f"可行性: 速度约束 {np.mean(v_ok)*100:.0f}% 满足, 加速度约束 {np.mean(a_ok)*100:.0f}% 满足")
 
 # %% [markdown]
 # ## 6. 练习题
