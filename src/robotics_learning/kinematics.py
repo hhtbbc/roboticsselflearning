@@ -203,23 +203,22 @@ def ik_numerical(dh_table: np.ndarray, T_des: np.ndarray,
                            orientation_error=rot_err_norm,
                            reason="Converged")
 
-        # 加权误差: 位置 (m) 和姿态 (rad) 各自缩放
-        error = np.concatenate([
-            position_weight * p_err,
-            orientation_weight * omega_err
-        ])
-
-        # 经典几何雅可比
+        # 加权误差和加权雅可比: W = diag(w_p, w_p, w_p, w_R, w_R, w_R)
+        raw_error = np.concatenate([p_err, omega_err])
         J = compute_geometric_jacobian(dh_table, q)
 
+        W = np.diag([position_weight] * 3 + [orientation_weight] * 3)
+        error_w = W @ raw_error
+        J_w = W @ J
+
         if damping > 0:
-            # DLS: Δq = J^T (J J^T + λ² I)^{-1} e
-            JJT = J @ J.T
-            delta_q = J.T @ np.linalg.solve(JJT + damping**2 * np.eye(6), error)
+            # 加权 DLS: Δq = J_w^T (J_w J_w^T + λ² I)^{-1} e_w
+            JJT_w = J_w @ J_w.T
+            delta_q = J_w.T @ np.linalg.solve(JJT_w + damping**2 * np.eye(6), error_w)
         else:
-            # 伪逆
-            J_pinv = np.linalg.pinv(J)
-            delta_q = J_pinv @ error
+            # 加权伪逆
+            J_pinv_w = np.linalg.pinv(J_w)
+            delta_q = J_pinv_w @ error_w
 
         # 最大单步关节增量限制
         step_norm = np.max(np.abs(delta_q))
