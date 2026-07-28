@@ -19,10 +19,10 @@
 
 # %% [markdown]
 # ## 2. 学习目标
-# - ⭐ PnP：最小化重投影误差求解 $\mathbf{T}_{cw}$
-# - ⭐ ICP：point-to-point 和 point-to-plane
-# - ⭐ 因子图：位姿图优化 = 稀疏非线性最小二乘
-# - 📖 RANSAC 外点剔除
+# - ⭐ PnP：最小化重投影误差求解 $\mathbf{T}_{cw}$（已知 2D-3D 对应）
+# - ⭐ 已知对应点云配准：point-to-point SVD 求解
+# - ⭐ 一维约束图：最小二乘位姿图优化与回环
+# - 📖 RANSAC / point-to-plane / 非线性因子图（后续独立章节）
 
 # %% [markdown]
 # ## 3. Python — PnP 简化实现

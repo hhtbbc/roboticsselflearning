@@ -578,7 +578,11 @@ def potential_field_plan(q_start: np.ndarray, q_goal: np.ndarray,
             obs_radius = obs.get('radius', 0.0)
             # 到障碍物表面的净距离
             rho = np.linalg.norm(q - obs['center']) - obs_radius
-            if rho < rho_0 and rho > 1e-10:
+            if rho <= 0:
+                # 机器人已进入障碍物内部 — 碰撞
+                U_history.append(U_att + 1e10)
+                return path, np.array(U_history)
+            if rho < rho_0:
                 direction = (q - obs['center']) / np.linalg.norm(q - obs['center'])
                 f_rep += k_rep * (1/rho - 1/rho_0) * (1/rho**2) * direction
                 U_rep += 0.5 * k_rep * (1/rho - 1/rho_0)**2

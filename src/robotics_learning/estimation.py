@@ -94,12 +94,17 @@ class ExtendedKalmanFilter:
     def __init__(self, f: Callable, h: Callable,
                  A_func: Callable, C_func: Callable,
                  Q: np.ndarray, R: np.ndarray,
-                 mu: np.ndarray = None, Sigma: np.ndarray = None):
+                 mu: np.ndarray = None, Sigma: np.ndarray = None,
+                 residual_fn: Callable = None,
+                 state_injection_fn: Callable = None):
         self.f, self.h = f, h
         self.A_func, self.C_func = A_func, C_func
         self.Q, self.R = Q, R
         self.n = Q.shape[0]
         self.m = R.shape[0]
+        # 可选：角度/流形状态的自定义残差和注入函数
+        self.residual_fn = residual_fn or (lambda z, z_pred: z - z_pred)
+        self.state_injection_fn = state_injection_fn or (lambda mu, dx: mu + dx)
 
         self.mu = mu if mu is not None else np.zeros(self.n)
         self.Sigma = Sigma if Sigma is not None else np.eye(self.n)
@@ -119,11 +124,11 @@ class ExtendedKalmanFilter:
         """更新步：在 μ̂_t 处线性化 h（Joseph 形式）"""
         C_t = self.C_func(self.mu)
 
-        y = z - self.h(self.mu)
+        y = self.residual_fn(z, self.h(self.mu))
         S = C_t @ self.Sigma @ C_t.T + self.R
         K = np.linalg.solve(S, C_t @ self.Sigma).T  # K = Σ C^T S^{-1}
 
-        self.mu = self.mu + K @ y
+        self.mu = self.state_injection_fn(self.mu, K @ y)
         # Joseph 形式: P = (I-KC)P(I-KC)^T + KRK^T
         I_KH = np.eye(self.n) - K @ C_t
         self.Sigma = I_KH @ self.Sigma @ I_KH.T + K @ self.R @ K.T

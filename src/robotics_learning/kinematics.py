@@ -10,7 +10,19 @@
 
 import numpy as np
 from typing import List, Tuple, Optional
+from dataclasses import dataclass
 from .transforms import rot_x, rot_z
+
+
+@dataclass
+class IKResult:
+    """数值 IK 的结构化返回结果"""
+    q: np.ndarray
+    success: bool
+    iterations: int
+    position_error: float
+    orientation_error: float
+    reason: str = ""
 
 
 # =============================================================================
