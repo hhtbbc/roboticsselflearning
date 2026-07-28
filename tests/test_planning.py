@@ -16,10 +16,10 @@ class TestPeriodicJoints:
         assert abs(wrap_to_pi(-np.pi)) == np.pi  # wrap
 
     def test_periodic_distance(self):
-        """从 179° 到 -179° 的距离应为 ~2°"""
+        """从 179° 到 -179° 的距离应为 ~2° (continuous joint)"""
         q1 = np.array([np.deg2rad(179), 0.0])
         q2 = np.array([np.deg2rad(-179), 0.0])
-        d = periodic_distance(q1, q2, ['revolute', 'prismatic'])
+        d = periodic_distance(q1, q2, ['continuous', 'prismatic'])
         assert abs(d - np.deg2rad(2)) < 1e-6
 
     def test_edge_collision_periodic(self):
@@ -28,7 +28,7 @@ class TestPeriodicJoints:
         q1 = np.array([np.deg2rad(179)])
         q2 = np.array([np.deg2rad(-179)])
         # 不应崩溃，采样点应走短弧
-        assert edge_collision_free(q1, q2, never_collide, joint_types=['revolute'])
+        assert edge_collision_free(q1, q2, never_collide, joint_types=['continuous'])
 
 
 class TestRRT:
@@ -99,7 +99,7 @@ class TestConfigurationSpace:
     def test_distance_periodic(self):
         from src.robotics_learning.planning import ConfigurationSpace
         bounds = np.array([[-np.pi, np.pi], [-np.pi, np.pi]])
-        cspace = ConfigurationSpace(bounds, ['revolute', 'revolute'])
+        cspace = ConfigurationSpace(bounds, ['continuous', 'revolute'])
         q1 = np.array([np.deg2rad(179), 0.0])
         q2 = np.array([np.deg2rad(-179), 0.0])
         d = cspace.distance(q1, q2)
@@ -108,12 +108,24 @@ class TestConfigurationSpace:
     def test_steer_shortest_arc(self):
         from src.robotics_learning.planning import ConfigurationSpace
         bounds = np.array([[-np.pi, np.pi]])
-        cspace = ConfigurationSpace(bounds, ['revolute'])
+        cspace = ConfigurationSpace(bounds, ['continuous'])
         q_near = np.array([np.deg2rad(179)])
         q_rand = np.array([np.deg2rad(-179)])
         q_new = cspace.steer(q_near, q_rand, 0.1)
         # 应走短弧 (2°) 方向 → q_new 应在 179° 附近向 -179° 走一步
         assert q_new[0] < -np.pi + 0.5 or q_new[0] > np.pi - 0.5
+
+    def test_revolute_not_wrapped(self):
+        """revolute 关节不应被 wrap — 仅在 continuous 上 wrap"""
+        from src.robotics_learning.planning import ConfigurationSpace
+        bounds = np.array([[-np.pi, np.pi]])
+        cspace = ConfigurationSpace(bounds, ['revolute'])
+        # distance 应对 revolute 用线性差
+        q1 = np.array([np.deg2rad(179)])
+        q2 = np.array([np.deg2rad(-179)])
+        d = cspace.distance(q1, q2)
+        # revolute 不 wrap → 距离约 358°
+        assert d > np.deg2rad(300)
 
     def test_within_bounds(self):
         from src.robotics_learning.planning import ConfigurationSpace

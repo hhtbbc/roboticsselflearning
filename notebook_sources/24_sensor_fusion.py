@@ -101,7 +101,9 @@ rng = np.random.RandomState(42)
 print("✅ 导入完成")
 
 # %% [markdown]
-# ### 5.1 编码器 + IMU 融合
+# ### 5.1 编码器 + 陀螺仪融合（无偏置简化模型）
+# 本简化模型状态为 x=[θ, θ̇]^T，不含陀螺仪偏置 b_g。
+# 陀螺仪直接测量角速度 θ̇，编码器测量角度 θ。
 
 # %%
 dt_f = 0.01; N_f = 300
@@ -178,10 +180,19 @@ O_both = np.vstack([C_enc, C_gyro])
 for k in range(1, 2):
     O_both = np.vstack([O_both, C_enc @ np.linalg.matrix_power(A_f, k), C_gyro @ np.linalg.matrix_power(A_f, k)])
 
-print(f"仅编码器: rank(O) = {np.linalg.matrix_rank(O_enc_only)} (需要 = 2 才完全可观测)")
-print(f"编码器+IMU: rank(O) = {np.linalg.matrix_rank(O_both)} (应 = 2)")
-print("仅用编码器观测角度时，角速度不可直接观测（只能通过差分推断）。")
-print("加入 IMU 直接测量角速度 → 系统完全可观测。")
+rank_enc = np.linalg.matrix_rank(O_enc_only)
+rank_both = np.linalg.matrix_rank(O_both)
+print(f"仅编码器: rank(O) = {rank_enc} (满秩=2 则完全可观测)")
+print(f"编码器+IMU: rank(O) = {rank_both}")
+# 说明: 在恒速度模型 x=[q, q̇]^T 下，编码器测量 q 本身已使系统可观测
+# q̇ 可通过差分推断。IMU 直接测量 q̇，可改善估计带宽和数值条件，
+# 但并非从不可观测变为可观测。真正需要 IMU 的场景是当 q̇ 的动态
+# 存在模型误差（如未知扰动）或需要估计偏置时。
+if rank_enc == 2:
+    print("注意：恒速度模型下，编码器角度序列已使 [q, q̇] 可观测。")
+    print("陀螺仪直接测量角速度 → 改善估计带宽、数值条件和动态响应，")
+    print("但不是从不可观测变成可观测。")
+print("本模型为无偏置简化 (x=[q,q̇] 不含 b_g)。带偏置模型需扩展 x=[q,q̇,b_g]^T。")
 
 # %% [markdown]
 # ## 6. 练习题
@@ -203,6 +214,6 @@ print("加入 IMU 直接测量角速度 → 系统完全可观测。")
 # |--------|------|:--------:|:----:|----------|
 # | 编码器 | 关节角 q | 低噪声、无漂移 | 高 (1kHz) | 基础位置 |
 # | 加速度计 | 比力 a-g | 高噪声、低频漂移 | 高 (200Hz) | 姿态修正 |
-# | 陀螺仪 | 角速度 ω | 低噪声但有漂移 | 高 (200Hz) | 短时姿态 |
+# | 陀螺仪 | 角速度 ω (不含偏置，本简化模型) | 低噪声但有漂移 | 高 (200Hz) | 短时姿态/改善带宽 |
 # | 相机 | 像素 [u,v] | 中噪声 | 低 (30Hz) | 绝对参考 |
 | 激光雷达 | 距离+方位 | 低噪声 | 中 (10Hz) | 精确距离 |

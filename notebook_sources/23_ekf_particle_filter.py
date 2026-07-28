@@ -133,8 +133,16 @@ def C_func(x):
 Q_ekf = np.diag([0.01, 0.01, 0.005])
 R_ekf = np.diag([0.3, 0.05]*3)
 
+# 自定义残差函数: 方位角创新使用 atan2 归一化到 [-π,π]
+def landmark_residual(z, z_pred):
+    residual = z - z_pred
+    # 方位角在奇数索引 (1, 3, 5, ...)
+    residual[1::2] = np.arctan2(np.sin(residual[1::2]), np.cos(residual[1::2]))
+    return residual
+
 ekf = ExtendedKalmanFilter(f_ekf, h_ekf, A_func, C_func, Q_ekf, R_ekf,
-                           mu=np.array([1,1,np.pi/4]), Sigma=np.eye(3)*0.5)
+                           mu=np.array([1,1,np.pi/4]), Sigma=np.eye(3)*0.5,
+                           residual_fn=landmark_residual)
 
 true_pose = np.zeros((N_ekf, 3)); true_pose[0] = [1,1,np.pi/4]
 mu_efk = np.zeros((N_ekf, 3))
@@ -174,8 +182,9 @@ plt.show()
 
 # %%
 # 简化：2D 位置 (x, y)，速度控制 + 距离测量
+# 注意：f_pf 必须是确定性模型 — ParticleFilter.predict() 内部统一注入 proc_std 噪声
 def f_pf(x, u):
-    return x + u * dt_ekf + rng.normal(0, 0.05, 2)
+    return x + u * dt_ekf
 
 def h_pf(x):
     z = []
@@ -187,6 +196,9 @@ pf = ParticleFilter(200, 2, f_pf, h_pf, np.array([0.05,0.05]), np.array([0.3,0.3
                     bounds=np.array([[0,10],[0,10]]), rng=rng)
 pf.initialize_uniform(np.array([[0,10],[0,10]]))
 
+# 保存初始粒子（循环开始前）
+particles_initial = pf.particles.copy()
+
 pf_hist = np.zeros((N_ekf, 2))
 for t in range(N_ekf):
     u = np.array([0.5*np.cos(true_pose[t,2]), 0.5*np.sin(true_pose[t,2])])
@@ -196,11 +208,11 @@ for t in range(N_ekf):
 
 fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(14, 6))
 
-# 初始：扩散的粒子
-ax1.scatter(pf.particles[:,0], pf.particles[:,1], s=5, c='blue', alpha=0.3)
+# 初始：保存的真实初始粒子（循环前）
+ax1.scatter(particles_initial[:,0], particles_initial[:,1], s=5, c='blue', alpha=0.3)
 ax1.scatter(*true_pose[0,:2], c='green', s=200, marker='*', label='True Start', zorder=5)
 ax1.scatter(landmarks[:,0], landmarks[:,1], c='red', s=80, marker='s', label='Landmarks')
-ax1.set_title(f'Particle Filter — t=0 (Uniform, N_eff={pf.neff():.0f})')
+ax1.set_title(f'Particle Filter — t=0 (Uniform, N={pf.N})')
 ax1.set_xlim([0,10]); ax1.set_ylim([0,10]); ax1.set_aspect('equal'); ax1.legend()
 
 # 最终：收敛的粒子

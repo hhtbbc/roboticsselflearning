@@ -75,13 +75,13 @@
 
 | # | 描述 | 状态 |
 |---|------|:----:|
-| 1 | 无测试体系（tests/目录空） | ⏳ |
-| 2 | check_notebooks.py 原地覆盖原始Notebook | ⏳ |
-| 3 | 无 CONVENTIONS.md 统一符号约定 | ⏳ |
-| 4 | 无 CI/CD | ⏳ |
+| 1 | 无测试体系 | ✅ 83 tests, 5 测试文件 |
+| 2 | check_notebooks.py 原地覆盖原始Notebook | ✅ 已改用 nbclient + 输出至 outputs/ |
+| 3 | 无 CONVENTIONS.md 统一符号约定 | ✅ 已创建 |
+| 4 | 无 CI/CD | ✅ .github/workflows/ci.yml |
 | 5 | 部分Notebook答案链接指向不存在的文件 | ⏳ |
-| 6 | pyproject.toml 缺少dev依赖组 | ⏳ |
-| 7 | 随机实验缺少种子设置 | ⏳ |
+| 6 | pyproject.toml 缺少dev依赖组 | ✅ 已添加 |
+| 7 | 随机实验缺少种子设置 | ⏳ (部分 Notebook 已使用 `RandomState(42)`) |
 
 ---
 
@@ -89,59 +89,19 @@
 
 | # | 描述 | 状态 |
 |---|------|:----:|
-| 1 | PROGRESS.md 与 BUILD_STATUS.md 职责混淆 | ⏳ |
+| 1 | PROGRESS.md 职责混淆 | ⏳ |
 | 2 | 部分 Notebook 缺少"本节约定"和"参考资料"节 | ⏳ |
 | 3 | 解答链接格式不统一 | ⏳ |
 
 ---
 
-## 已确认但待修复的具体代码位置
+## 仍待处理（2026-07-28）
 
-### kinematics.py:dh_transform
-- L35-48: `convention='standard'` 实际实现的是 Rz(θ)Tz(d)Tx(a)Rx(α)，这是改进DH(MDH)的顺序
-- L49-62: `convention='modified'` 实际实现的是 Rx(α)Tx(a)Rz(θ)Tz(d)，这是原始 Craig DH
-- 两个命名与实际实现颠倒
-
-### estimation.py:ParticleFilter.predict
-- L199: 过程模型f内部调用rng.normal加噪声
-- predict方法又加了一次 proc_std 噪声
-- 双重噪声导致实际过程噪声大于预期
-
-### 23_ekf_particle_filter.py
-- `mu_efk = np.zeros((N_ekf, 3))` 出现两次，第二次覆盖了第一次的初始化
-- 协方差椭圆循环使用 ekf.Sigma（最终时刻），应为 Sigma_history[t]
-- 角度残差直接相减未做 atan2 归一化
-
-### 25_integrated_project.py
-- collision检测只检查3个点：肘部、末端、中点
-- RRT失败后 fallback: `path_rrt = [q_start, q_goal]`
-- 使用 `KalmanFilter`（线性KF）但文档描述为EKF
-- 控制矩阵B为零矩阵，力矩信息未进入预测
-
-## 2026-07-24 更新 — 第二轮批次 A 修复
-
-### 已修复
-
-| # | 原问题 | 修复内容 | 测试 |
-|---|--------|----------|:--:|
-| 1 | Twist [v;ω] vs [ω;v] 矛盾 | CONVENTIONS, se3_exp, adjoint, adjoint_inv_transpose 全面修正为 [ω;v] | ✅ |
-| 2 | so3_log θ≈π 退化 | 三分支实现: θ≈0 展开/一般/θ≈π (R+I 提取轴) | ✅ |
-| 3 | Geometric Jacobian 被当成 Spatial Jacobian | 分离概念; 新增 compute_space_jacobian_poe | ✅ |
-| 4 | PoE 对比表误导 | 修正参数量/奇异性/工业采用描述 | ✅ |
-| 5 | 优化残差符号不一致 | 统一推导: r = x_d-f(q), J_r = -J | ✅ |
-| 6 | 周期关节未贯穿规划器 | edge_collision_free 支持周期距离+周期插值 | ✅ |
-| 7 | 测试缺失 | 新增 test_planning.py, 180° so3_log, Adjoint 一致性, 功率不变性 | ✅ |
-| 8 | check_notebooks 无 sys.exit | 失败时 raise SystemExit(1) | ✅ |
-| 9 | CI 缺失 | .github/workflows/ci.yml (ruff + pytest) | ✅ |
-| 10 | homogenous 拼写 | homogeneous_transform + 兼容别名 | ✅ |
-| 11 | se3_log 缺失 | 新实现: SE(3)→se(3) 对数映射 (含左雅可比逆) | ✅ |
-
-### 仍待处理
-
-| # | 问题 |
-|---|------|
-| 1 | NB04b/05b 代码仍使用局部定义的旧版 adjoint/se3_hat (与模块新实现不一致) |
-| 2 | README 索引未更新至 45 个 Notebook |
-| 3 | NB14 TOPP 未完成 |
-| 4 | test_dynamics.py 未创建 |
-| 5 | Jupytext 双向同步未配置 |
+| # | 问题 | 优先级 |
+|---|------|:------:|
+| 1 | NB04b/05b 代码仍使用局部定义的旧版 adjoint/se3_hat | P2 |
+| 2 | README 索引未更新至 45 个 Notebook | P3 |
+| 3 | time_optimal_parameterization 重命名为 velocity_mvc_from_joint_limits (别名保留) | P1 |
+| 4 | NB14 Notebook + 公共 TOPP 接口衔接（NB 使用独立实现,应统一调用轨迹模块） | P1 |
+| 5 | Jupytext 双向同步未配置 | P3 |
+| 6 | 估计模块缺少完整 UKF predict/update 实现 | P1 |

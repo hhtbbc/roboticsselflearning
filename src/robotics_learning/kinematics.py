@@ -304,7 +304,10 @@ def compute_pose_parameter_jacobian_fd(dh_table: np.ndarray, q: np.ndarray) -> n
         q_plus = q.copy()
         q_plus[i] += eps
         fi = fk_pose(dh_table, q_plus)
-        J_A[:, i] = (fi - f0) / eps
+        diff = fi - f0
+        # 欧拉角差值 wrap (fi[3:6], f0[3:6] 可能跨越 ±π)
+        diff[3:6] = np.arctan2(np.sin(diff[3:6]), np.cos(diff[3:6]))
+        J_A[:, i] = diff / eps
 
     return J_A
 

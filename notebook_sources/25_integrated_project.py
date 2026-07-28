@@ -19,7 +19,7 @@
 # 本 Notebook 将课程十个模块串联成一个完整的闭环系统：
 #
 # ```
-#   运动规划(RRT+精确碰撞) → shortcut → C²五次轨迹 → 时间参数化 → CTC(力矩限幅) → 动力学仿真
+#   运动规划(RRT+精确碰撞) → shortcut → C²三次样条轨迹(固定4s) → CTC(力矩限幅) → 动力学仿真
 #         ↑                                                                        ↓
 #         └────────── 状态估计(EKF) ←──── 编码器噪声 ←──── 真值状态 ←──────────────┘
 # ```
@@ -143,15 +143,17 @@ for qa, qb in zip(path_short[:-1], path_short[1:]):
 print(f"✅ 所有 shortcut 边通过精确碰撞检查")
 
 # %% [markdown]
-# ### C² 连续轨迹生成 — 五次样条 + 精确碰撞复检
+# ### C² 连续轨迹生成 — 三次样条 + 精确碰撞复检
+# 注意：当前使用固定总时长 4s 的自然三次样条，尚未接入路径时间参数化。
+# 自然样条的端点条件为零二阶导数，不保证零边界速度。
+# 如从静止启动，建议使用 clamped spline 或独立轨迹段。
 
 # %%
 T_total = 4.0; dt_proj = 0.005; n_steps = int(T_total/dt_proj)
 via_time = np.linspace(0, T_total, len(path_short))
 via_arr = np.array(path_short)
 
-# 使用五次样条（C² 连续适用 CTC）代替线性插值
-# cubic spline 也满足 C²；五次强制零边界加速度
+# 使用自然三次样条 (C² 连续，固定 4s 总时长；从静止启动建议用 clamped spline)
 cs1_q = CubicSpline(via_time, via_arr[:, 0], bc_type='natural')
 cs2_q = CubicSpline(via_time, via_arr[:, 1], bc_type='natural')
 
@@ -161,20 +163,18 @@ qd_d = np.column_stack([cs1_q(t_traj, 1), cs2_q(t_traj, 1)])
 qdd_d = np.column_stack([cs1_q(t_traj, 2), cs2_q(t_traj, 2)])
 
 # 平滑后精确碰撞复检 — 对期望轨迹全量验证
-n_traj_collisions = sum(not arm_collision_free_precise(q_d[i])
-                         for i in range(0, len(q_d), max(1, len(q_d)//200)))
-assert n_traj_collisions == 0, \
-    f"平滑后期望轨迹有 {n_traj_collisions} 个碰撞点！需增加 via-point 密度。"
-print(f"✅ 期望轨迹 ({len(q_d)} 步, {T_total}s, 三次样条 C²) 精确碰撞复检通过")
+assert all(arm_collision_free_precise(q) for q in q_d), \
+    "平滑后期望轨迹存在碰撞！需增加 via-point 密度。"
+print(f"✅ 期望轨迹 ({len(q_d)} 步, {T_total}s, C²三次样条) 全量精确碰撞复检通过")
 
-# 速度和加速度约束验证
+# 速度/加速度约束 — 逐关节验证
 q_dot_max = np.array([4.0, 5.0])
 q_ddot_max = np.array([15.0, 18.0])
-assert np.max(np.abs(qd_d)) <= q_dot_max.max() * 1.05, \
-    f"期望速度超限: max|q̇|={np.max(np.abs(qd_d)):.3f}"
-assert np.max(np.abs(qdd_d)) <= q_ddot_max.max() * 1.05, \
-    f"期望加速度超限: max|q̈|={np.max(np.abs(qdd_d)):.3f}"
-print(f"✅ 期望轨迹速度/加速度在合理范围")
+assert np.all(np.abs(qd_d) <= 1.05 * q_dot_max[None, :]), \
+    f"期望速度超限: max|q̇₁|={np.max(np.abs(qd_d[:,0])):.3f}, max|q̇₂|={np.max(np.abs(qd_d[:,1])):.3f}"
+assert np.all(np.abs(qdd_d) <= 1.05 * q_ddot_max[None, :]), \
+    f"期望加速度超限: max|q̈₁|={np.max(np.abs(qdd_d[:,0])):.3f}, max|q̈₂|={np.max(np.abs(qdd_d[:,1])):.3f}"
+print(f"✅ 逐关节速度/加速度约束全部满足")
 
 # ====== 4. 闭环仿真 ======
 # EKF 过程噪声模型说明:
@@ -182,11 +182,11 @@ print(f"✅ 期望轨迹速度/加速度在合理范围")
 #   白噪声加速度 → 离散协方差:
 #     Q_d = [[Δt⁴/4·σ_a²·I,  Δt³/2·σ_a²·I],
 #            [Δt³/2·σ_a²·I,  Δt²·σ_a²·I]]
-#   取 σ_a ≈ 10 (rad/s²)², Δt=0.005s:
+#   取 σ_a = 10 rad/s² (加速度噪声标准差), Δt=0.005s:
 #     Δt⁴/4 ≈ 1.6e-10, Δt³/2 ≈ 6.3e-8, Δt² ≈ 2.5e-5
-#   保守使用 q 通道 1e-6, q̇ 通道 10.0 (覆盖建模误差)
+#   这些 Q 元素自动覆盖建模误差（q 通道 ~1e-10 → q̇ 通道 ~2.5e-3）
 dt_ekf = dt_proj
-sigma_a = 10.0  # rad/s² 加速度噪声标准差
+sigma_a = 10.0  # rad/s² 加速度噪声标准差 (单位: rad/s², 方差 σ_a² 单位: (rad/s²)²)
 Q_ekf = np.zeros((4, 4))
 Q_ekf[:2, :2] = np.eye(2) * (dt_ekf**4 / 4) * sigma_a**2    # q-q 耦合
 Q_ekf[:2, 2:] = np.eye(2) * (dt_ekf**3 / 2) * sigma_a**2    # q-q̇ 耦合
@@ -300,30 +300,23 @@ print(f"最大力矩 (限幅 {tau_max} Nm): J1={np.max(np.abs(tau_hist[:,0])):.2
 
 # ====== 安全断言 ======
 print(f"\n=== 安全验证 ===")
-# 1. 期望轨迹无碰撞
-assert all(arm_collision_free_precise(q_d[i]) for i in range(0, len(q_d), max(1, len(q_d)//500))), \
+# 1. 期望轨迹全量无碰撞
+assert all(arm_collision_free_precise(q) for q in q_d), \
     "期望轨迹存在碰撞！"
-print("✅ 期望轨迹全程无碰撞")
+print(f"✅ 期望轨迹 ({len(q_d)} 点) 全量无碰撞")
 
-# 2. 实际闭环轨迹无碰撞（逐状态 + 逐边验证）
-n_true_checked = len(range(0, len(q_true_hist), max(1, len(q_true_hist)//500)))
-true_collisions = sum(not arm_collision_free_precise(q_true_hist[i])
-                       for i in range(0, len(q_true_hist), max(1, len(q_true_hist)//500)))
-assert true_collisions == 0, \
-    f"实际闭环轨迹有 {true_collisions}/{n_true_checked} 个碰撞点！"
-print(f"✅ 实际闭环轨迹 ({n_true_checked} 采样点) 无碰撞")
+# 2. 实际闭环轨迹 — 全量逐状态验证
+assert all(arm_collision_free_precise(q) for q in q_true_hist), \
+    "实际闭环轨迹存在碰撞！"
+print(f"✅ 实际闭环轨迹 ({len(q_true_hist)} 状态) 全量无碰撞")
 
-# 3. 逐边碰撞验证（相邻状态间的连续运动）
-edge_collision_count = 0
-step_check = max(1, len(q_true_hist) // 200)
-for idx in range(0, len(q_true_hist)-1, step_check):
-    if not edge_collision_free(q_true_hist[idx], q_true_hist[idx+1],
-                               arm_collision_free_precise, resolution=0.005,
-                               joint_types=['revolute', 'revolute']):
-        edge_collision_count += 1
-assert edge_collision_count == 0, \
-    f"闭环轨迹有 {edge_collision_count} 条边碰撞！"
-print(f"✅ 闭环轨迹连续边碰撞检查通过")
+# 3. 逐边碰撞验证 — 检查每一条相邻状态边
+for qa, qb in zip(q_true_hist[:-1], q_true_hist[1:]):
+    assert edge_collision_free(qa, qb, arm_collision_free_precise,
+                               resolution=0.005,
+                               joint_types=['continuous', 'continuous']), \
+        f"闭环边碰撞: q={qa} → {qb}"
+print(f"✅ 闭环轨迹 {len(q_true_hist)-1} 条边全量碰撞检查通过")
 
 # 4. 力矩限幅生效
 assert np.max(np.abs(tau_hist)) <= tau_max + 1e-6, \
@@ -363,5 +356,6 @@ plt.savefig('../outputs/25_arm_motion.png', dpi=100, bbox_inches='tight')
 plt.show()
 
 print("\n✅ 综合项目完成 — 所有安全检查通过")
-print("流水线: RRT(精确碰撞) → Shortcut → C²样条 → CTC(力矩限幅) → 动力学 → 编码器(σ=0.03) → EKF(Q_d离散化)")
-print("安全验证: 期望轨迹 + 实际闭环轨迹 + 连续边碰撞 + 力矩限幅 全部通过")
+print("流水线: RRT(精确碰撞) → Shortcut → C²三次样条(固定4s) → CTC(力矩限幅) → 动力学 → 编码器(σ=0.03) → EKF(Q_d离散化)")
+print("安全验证: 期望轨迹 + 实际闭环轨迹 + 全部连续边碰撞 + 力矩限幅 全部通过")
+print("注意: 当前使用固定总时长，未接入路径时间参数化。如需约束最优时间请使用 topp_forward_backward_parameterization().")

@@ -12,7 +12,7 @@ This is **Robotics Self-Learning Course** — a 30-day systematic robotics curri
 # Install dependencies (including dev)
 uv sync --all-groups
 
-# Run all tests (65 tests currently)
+# Run all tests (83 tests currently)
 uv run pytest tests/ -v
 
 # Run a single test file
@@ -50,7 +50,7 @@ Nine modules, each covering one domain of robotics algorithms:
 | `dynamics.py` | Rigid-body dynamics, integration | `TwoLinkArmDynamics`, `rk4_step`, `simulate_dynamics`, `rnea_2r` |
 | `control.py` | Joint/operational space control | `PIDController`, `computed_torque_control`, `gravity_compensation_pd`, `sliding_mode_control` |
 | `planning.py` | Graph search, sampling-based, potential field | `RRTNode`, `dijkstra`, `astar`, `prm_plan`, `rrt_plan`, `rrt_star_plan`, `potential_field_plan`, `edge_collision_free` |
-| `trajectory.py` | Trajectory generation and time parameterization | `trapezoidal_trajectory`, `quintic_trajectory`, `cubic_trajectory`, `via_point_trajectory`, `time_optimal_parameterization` |
+| `trajectory.py` | Trajectory generation and time parameterization | `trapezoidal_trajectory`, `quintic_trajectory`, `cubic_trajectory`, `via_point_trajectory`, `velocity_mvc_from_joint_limits`, `topp_forward_backward_parameterization` |
 | `estimation.py` | KF, EKF, particle filter, UKF | `KalmanFilter`, `ExtendedKalmanFilter`, `ParticleFilter`, `ukf_sigma_points` |
 | `simulation.py` | Sensor simulation, integration | `rk4_integrate`, `simulate_encoder`, `simulate_accelerometer`, `simulate_gyroscope`, `simulate_lidar_2d` |
 | `visualization.py` | Plotting helpers (matplotlib) | `draw_frame_3d`, `plot_2r_arm`, `plot_trajectory_1d`, `plot_kf_results`, `plot_particle_filter` |
@@ -93,9 +93,17 @@ P0 bugs in notebooks still pending full fix: TOPP (NB14), EKF history arrays (NB
 tests/
 ├── test_transforms.py   # SO(3)/SE(3), quaternions, Euler, axis-angle, Lie group (most tests)
 ├── test_kinematics.py   # DH, FK, IK, Jacobian
-├── test_planning.py     # RRT, RRT*, A*, periodic joints
-├── test_dynamics.py     # Dynamics (currently minimal)
-└── test_trajectory.py   # Trapezoidal, polynomial, via-point trajectories
+├── test_planning.py     # RRT, RRT*, A*, periodic joints, ConfigurationSpace
+├── test_dynamics.py     # Dynamics (RNEA, mass matrix, energy conservation)
+└── test_trajectory.py   # Trapezoidal, polynomial, via-point, TOPP (4 tests)
 ```
 
-65 tests, all passing. Random experiments should use fixed seeds — this is on the P2 list.
+83 tests, all passing. Random experiments should use fixed seeds.
+
+## Key Conventions (from `CONVENTIONS.md` + recent additions)
+
+- **Joint types in `ConfigurationSpace`**: Use `'continuous'` for unbounded periodic joints (wrapped via `wrapToPi`), `'revolute'` for hard-limited joints (linear difference), `'prismatic'` for linear joints. The default is `'revolute'` (not `'continuous'`).
+- **TOPP**: `velocity_mvc_from_joint_limits()` computes only MVC from velocity constraints. `topp_forward_backward_parameterization()` performs the full teaching-approximation forward-backward pass with acceleration constraints and time integration. The old `time_optimal_parameterization` is an alias for the MVC-only function.
+- **EKF**: Supports `residual_fn` (e.g., angle atan2 normalization), `state_injection_fn`, and `state_normalization_fn` (post-update wrap).
+- **PF**: `f(x,u)` must be deterministic — noise is added by `predict()`. Supports `periodic_dims` for circular mean. Noise was previously doubled in NB23 (fixed: removed from process model).
+- **Inertia parameters (NB12)**: Standard 10 linear parameters use I_O (about origin), not I_C (about COM), to maintain linearity in τ=Yθ.

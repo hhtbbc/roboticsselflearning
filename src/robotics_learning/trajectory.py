@@ -196,34 +196,25 @@ def via_point_trajectory(via_points: np.ndarray,
 
 
 # =============================================================================
-# 时间参数化 (简化 TOPP)
+# 时间参数化
 # =============================================================================
 
-def time_optimal_parameterization(path: Callable[[float], np.ndarray],
-                                  path_deriv: Callable[[float], np.ndarray],
-                                  s_grid: np.ndarray,
-                                  q_dot_limits: np.ndarray,
-                                  q_ddot_limits: np.ndarray) -> Tuple[np.ndarray, np.ndarray]:
-    """
-    简化的时间最优路径参数化
+def velocity_mvc_from_joint_limits(path_deriv: Callable[[float], np.ndarray],
+                                    s_grid: np.ndarray,
+                                    q_dot_limits: np.ndarray) -> np.ndarray:
+    """仅根据关节速度约束计算 MVC 曲线。
 
-    在 (s, ṡ) 相平面上计算最大速度曲线 (MVC) 和时间最优轨迹。
+    s_dot_max(s) = min_i q_dot_max,i / |f'_i(s)|
+    若 f'_i(s)=0，该关节对此处ṡ无约束。
 
-    参数:
-        path: q = f(s), s ∈ [0,1]
-        path_deriv: q = f'(s)
-        s_grid: s 的离散点
-        q_dot_limits, q_ddot_limits: 关节速度/加速度约束
-
-    返回:
-        s_dot_max: MVC 曲线
-        s_dot_opt: 时间最优 ṡ 曲线
+    此函数只做速度约束，不做加速度约束/前向后向传播。
+    完整教学版前向-后向参数化见：
+        topp_forward_backward_parameterization()
     """
     n_s = len(s_grid)
     n_dof = len(q_dot_limits)
     s_dot_max = np.full(n_s, np.inf)
 
-    # 1. 速度约束: |f'_i(s) * ṡ| ≤ q_dot_max_i
     for i in range(n_s):
         s = s_grid[i]
         fp = path_deriv(s)
@@ -231,8 +222,130 @@ def time_optimal_parameterization(path: Callable[[float], np.ndarray],
             if abs(fp[d]) > 1e-10:
                 s_dot_max[i] = min(s_dot_max[i],
                                    q_dot_limits[d] / abs(fp[d]))
+    return s_dot_max
 
-    # 2. 加速度约束: |f'_i(s) * s̈ + f''_i(s) * ṡ²| ≤ q_ddot_max_i
-    # s̈_max = (q̈_max - f'' ṡ²) / f'（简化处理）
 
-    return s_dot_max, s_dot_max  # 简化版返回 MVC
+def topp_forward_backward_parameterization(
+        f_vals: np.ndarray,
+        fp_vals: np.ndarray,
+        fpp_vals: np.ndarray,
+        s_vals: np.ndarray,
+        q_dot_limits: np.ndarray,
+        q_ddot_limits: np.ndarray,
+        s_dot_start: float = 0.0,
+        s_dot_end: float = 0.0,
+) -> Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+    """教学版前向-后向路径速度参数化近似。
+
+    在 (s, ṡ) 相平面上:
+    1. 计算 MVC (最大速度曲线)
+    2. 前向传播: 从 s=0 用最大加速 β(s,ṡ) 前进
+    3. 后向传播: 从 s=1 用最大减速 α(s,ṡ) 后退
+    4. 取 min(前向, 后向, MVC) 作为近似曲线
+    5. 通过时间积分得到 t(s)
+
+    注意: 此为教学近似，不保证严格 TOPP-RA 时间最优或全部约束满足。
+    生产级应用请使用 toppra 库。
+
+    参数:
+        f_vals: (n_s, n_dof) 路径值 q = f(s)
+        fp_vals: (n_s, n_dof) 路径一阶导 f'(s)
+        fpp_vals: (n_s, n_dof) 路径二阶导 f''(s)
+        s_vals: (n_s,) s 网格
+        q_dot_limits: (n_dof,) 关节速度上限
+        q_ddot_limits: (n_dof,) 关节加速度上限
+        s_dot_start: s=0 处初始 ṡ
+        s_dot_end: s=1 处终端 ṡ
+
+    返回:
+        s_dot_mvc: MVC 曲线
+        s_dot_fwd: 前向传播曲线
+        s_dot_bwd: 后向传播曲线
+        s_dot_approx: 近似 ṡ(s) = min(fwd, bwd, MVC)
+        t_vals: 从 ṡ(s) 积分得到的时间数组 t(s)
+    """
+    n_s = len(s_vals)
+    n_dof = len(q_dot_limits)
+    ds = s_vals[1] - s_vals[0]
+
+    # 1. MVC: 速度约束
+    s_dot_mvc = np.full(n_s, np.inf)
+    for i in range(n_s):
+        for d in range(n_dof):
+            if abs(fp_vals[i, d]) > 1e-10:
+                s_dot_mvc[i] = min(s_dot_mvc[i],
+                                   q_dot_limits[d] / abs(fp_vals[i, d]))
+
+    # 2. α,β 辅助函数 (加速度约束下的可行动态)
+    def compute_alpha_beta(s_idx, s_dot_val):
+        alpha = -np.inf
+        beta = np.inf
+        for d in range(n_dof):
+            fp = fp_vals[s_idx, d]
+            fpp = fpp_vals[s_idx, d]
+            term = fpp * s_dot_val**2
+            if abs(fp) < 1e-10:
+                if abs(term) > q_ddot_limits[d] + 1e-6:
+                    return 0.0, 0.0, False
+                continue
+            lo = (-q_ddot_limits[d] - term) / fp
+            hi = (q_ddot_limits[d] - term) / fp
+            if fp > 0:
+                alpha = max(alpha, lo)
+                beta = min(beta, hi)
+            else:
+                alpha = max(alpha, hi)
+                beta = min(beta, lo)
+        feasible = alpha <= beta + 1e-6
+        return alpha, beta, feasible
+
+    # 3. 前向传播 (最大加速)
+    s_dot_fwd = np.zeros(n_s)
+    s_dot_fwd[0] = s_dot_start
+    for i in range(1, n_s):
+        _, beta, feasible = compute_alpha_beta(i - 1, s_dot_fwd[i - 1])
+        if not feasible:
+            raise RuntimeError(
+                f"Forward pass infeasible at s={s_vals[i-1]:.6f}: "
+                f"α > β at ṡ={s_dot_fwd[i-1]:.4f}"
+            )
+        s_dot_sq = s_dot_fwd[i - 1]**2 + 2 * beta * ds
+        if s_dot_sq < -1e-10:
+            raise RuntimeError(
+                f"Forward pass unreachable at s={s_vals[i]:.6f}"
+            )
+        s_dot_fwd[i] = np.sqrt(max(0, s_dot_sq))
+        s_dot_fwd[i] = min(s_dot_fwd[i], s_dot_mvc[i])
+
+    # 4. 后向传播 (最大减速)
+    s_dot_bwd = np.zeros(n_s)
+    s_dot_bwd[-1] = s_dot_end
+    for i in range(n_s - 2, -1, -1):
+        alpha, _, feasible = compute_alpha_beta(i + 1, s_dot_bwd[i + 1])
+        if not feasible:
+            raise RuntimeError(
+                f"Backward pass infeasible at s={s_vals[i+1]:.6f}: "
+                f"α > β at ṡ={s_dot_bwd[i+1]:.4f}"
+            )
+        s_dot_sq = s_dot_bwd[i + 1]**2 - 2 * alpha * ds
+        if s_dot_sq < -1e-10:
+            raise RuntimeError(
+                f"Backward pass unreachable at s={s_vals[i]:.6f}"
+            )
+        s_dot_bwd[i] = np.sqrt(max(0, s_dot_sq))
+        s_dot_bwd[i] = min(s_dot_bwd[i], s_dot_mvc[i])
+
+    # 5. 近似曲线
+    s_dot_approx = np.minimum(np.minimum(s_dot_fwd, s_dot_bwd), s_dot_mvc)
+
+    # 6. 时间积分 t(s) = ∫ ds / ṡ(s)
+    t_vals = np.zeros(n_s)
+    for i in range(1, n_s):
+        s_dot_avg = max((s_dot_approx[i] + s_dot_approx[i - 1]) / 2, 1e-6)
+        t_vals[i] = t_vals[i - 1] + ds / s_dot_avg
+
+    return s_dot_mvc, s_dot_fwd, s_dot_bwd, s_dot_approx, t_vals
+
+
+# 旧函数保留为兼容别名（重命名以反映其实际功能）
+time_optimal_parameterization = velocity_mvc_from_joint_limits

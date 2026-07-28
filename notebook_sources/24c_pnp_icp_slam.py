@@ -56,16 +56,18 @@ pts_2d = pts_2d[:, :2] / pts_2d[:, 2, None]
 pts_2d += rng.normal(0, 2, pts_2d.shape)  # 噪声
 
 # PnP: 从 2D-3D 对应求解 R, t
-# 注意：此简化版假设所有点均在相机前方 (z_c > 0)；生产系统需检查并拒绝/降权 z_c ≤ 0 的点
+# 注意：此简化版假设所有点均在相机前方 (z_c > 0)；生产系统需检查并拒绝 z_c ≤ 0 的点
 def reprojection_error(params, pts_3d, pts_2d, K):
     omega = params[:3]; t = params[3:]
     R = so3_exp(omega)
     errors = []
     for p3, p2 in zip(pts_3d, pts_2d):
         pc = R @ p3 + t
-        if pc[2] <= 0:
-            # 深度为负：点在相机后方，赋予大权重惩罚
-            errors.extend([1e6, 1e6])
+        if pc[2] <= 1e-6:
+            # 深度非正：点在相机后方/平面上 — 返回大残差且保留梯度
+            # 使用 z_c 的 sigmoid 惩罚: 当 z_c→0⁻ 时残差平滑增大
+            z_penalty = np.exp(-pc[2]) * 1e4  # z_c≪0 时巨大，z_c≥0 时小
+            errors.extend([z_penalty, z_penalty])
             continue
         uv = K @ pc; uv = uv[:2]/uv[2]
         errors.extend(uv - p2)

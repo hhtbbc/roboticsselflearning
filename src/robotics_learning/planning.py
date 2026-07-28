@@ -25,13 +25,13 @@ def wrap_to_pi(angle: float) -> float:
 def periodic_distance(q1: np.ndarray, q2: np.ndarray,
                       joint_types: List[str] = None) -> float:
     """
-    考虑旋转关节周期性的构型空间距离。
-    旋转关节使用 wrapToPi 处理，移动关节使用线性差。
+    考虑连续旋转关节周期性的构型空间距离。
+    仅 'continuous' 类型关节使用 wrapToPi，其它使用线性差。
     """
     d = q1 - q2
     if joint_types is not None:
         for i, jt in enumerate(joint_types):
-            if jt == 'revolute':
+            if jt == 'continuous':
                 d[i] = wrap_to_pi(d[i])
     return np.linalg.norm(d)
 
@@ -39,24 +39,36 @@ def periodic_distance(q1: np.ndarray, q2: np.ndarray,
 class ConfigurationSpace:
     """统一 C-space 描述，封装周期拓扑、距离、插值等。
 
+    关节类型:
+        - 'continuous': 严格周期关节 (如无限制旋转轴)，执行 wrapToPi
+        - 'revolute':   带硬限位的旋转关节，线性差（不 wrap）
+        - 'prismatic':  线性移动关节，线性差
+
     用法:
-        cspace = ConfigurationSpace(bounds, joint_types=['revolute', 'revolute'])
+        cspace = ConfigurationSpace(bounds, joint_types=['continuous', 'revolute'])
         dist = cspace.distance(q1, q2)
-        q_mid = cspace.interpolate(q1, q2, 0.5)
-        q_new = cspace.steer(q_near, q_rand, step_size)
+        q_mid = cspace.interpolate(q1, q2, 0.5)  # 自动 normalize
+        q_new = cspace.steer(q_near, q_rand, step_size)  # 自动 normalize
         q_norm = cspace.normalize(q)
         ok = cspace.within_bounds(q)
     """
     def __init__(self, bounds: np.ndarray, joint_types: List[str] = None):
         self.bounds = np.asarray(bounds)
         self.dim = self.bounds.shape[0]
+        # 默认全部为 revolute (带限位)，不默认 continuous
         self.joint_types = joint_types or ['revolute'] * self.dim
 
+    def _wrap_dim(self, i: int, val: float) -> float:
+        """仅对 continuous 关节执行 wrap"""
+        if self.joint_types[i] == 'continuous':
+            return wrap_to_pi(val)
+        return val
+
     def difference(self, q_from: np.ndarray, q_to: np.ndarray) -> np.ndarray:
-        """从 q_from 到 q_to 的最短弧向量（周期关节 wrap）"""
+        """从 q_from 到 q_to 的最短弧向量（仅 continuous 关节 wrap）"""
         d = np.asarray(q_to, dtype=float) - np.asarray(q_from, dtype=float)
         for i, jt in enumerate(self.joint_types):
-            if jt == 'revolute':
+            if jt == 'continuous':
                 d[i] = wrap_to_pi(d[i])
         return d
 
@@ -66,25 +78,27 @@ class ConfigurationSpace:
 
     def interpolate(self, q1: np.ndarray, q2: np.ndarray,
                     alpha: float) -> np.ndarray:
-        """C-space 插值（周期关节走最短弧）"""
+        """C-space 插值（continuous 关节走最短弧），返回后 normalize"""
         diff = self.difference(q1, q2)
-        return np.asarray(q1) + alpha * diff
+        result = np.asarray(q1) + alpha * diff
+        return self.normalize(result)
 
     def steer(self, q_near: np.ndarray, q_rand: np.ndarray,
               step_size: float) -> np.ndarray:
-        """从 q_near 向 q_rand 扩展 step_size"""
+        """从 q_near 向 q_rand 扩展 step_size，返回后 normalize"""
         diff = self.difference(q_near, q_rand)
         dist = float(np.linalg.norm(diff))
         if dist < 1e-10:
-            return np.asarray(q_near).copy()
+            return self.normalize(np.asarray(q_near).copy())
         eta = min(step_size, dist)
-        return np.asarray(q_near) + eta * diff / dist
+        result = np.asarray(q_near) + eta * diff / dist
+        return self.normalize(result)
 
     def normalize(self, q: np.ndarray) -> np.ndarray:
-        """将旋转关节 wrap 到 [-π, π]"""
+        """仅对 continuous 关节 wrap 到 [-π, π]"""
         q = np.asarray(q, dtype=float).copy()
         for i, jt in enumerate(self.joint_types):
-            if jt == 'revolute':
+            if jt == 'continuous':
                 q[i] = wrap_to_pi(q[i])
         return q
 
@@ -138,10 +152,8 @@ def edge_collision_free(q_a: np.ndarray, q_b: np.ndarray,
     """
     沿整条边 (q_a → q_b) 以给定分辨率插值检测碰撞。
 
-    使用周期距离计算采样数，使用周期插值处理旋转关节。
-    线性插值在旋转关节上会被替换为最短弧插值。
-
-    采样数 = max(2, ceil(dist_periodic / resolution))
+    仅 'continuous' 关节使用最短弧插值，其它使用线性插值。
+    采样数 = max(2, ceil(periodic_distance / resolution))
 
     返回: True 如果整条边都无碰撞
     """
@@ -151,7 +163,7 @@ def edge_collision_free(q_a: np.ndarray, q_b: np.ndarray,
         if joint_types is not None:
             q_mid = q_a.copy()
             for d, jt in enumerate(joint_types):
-                if jt == 'revolute':
+                if jt == 'continuous':
                     diff = wrap_to_pi(q_b[d] - q_a[d])
                     q_mid[d] = q_a[d] + alpha * diff
                 else:
@@ -167,12 +179,13 @@ def periodic_steer(q_near: np.ndarray, q_rand: np.ndarray,
                    step_size: float,
                    joint_types: List[str] = None) -> np.ndarray:
     """
-    从 q_near 向 q_rand 扩展 step_size，考虑旋转关节周期性。
+    从 q_near 向 q_rand 扩展 step_size。
+    仅 'continuous' 关节使用最短弧方向。
     """
     direction = q_rand - q_near
     if joint_types is not None:
         for i, jt in enumerate(joint_types):
-            if jt == 'revolute':
+            if jt == 'continuous':
                 direction[i] = wrap_to_pi(direction[i])
     dist = np.linalg.norm(direction)
     if dist < 1e-10:
@@ -331,7 +344,8 @@ def prm_plan(c_space_free: Callable[[np.ndarray], bool],
              bounds: np.ndarray, n_samples: int = 200,
              k_neighbors: int = 5,
              start: np.ndarray = None, goal: np.ndarray = None,
-             rng: np.random.RandomState = None) -> dict:
+             rng: np.random.RandomState = None,
+             joint_types: List[str] = None) -> dict:
     """
     PRM 概率路图规划
 
@@ -341,28 +355,29 @@ def prm_plan(c_space_free: Callable[[np.ndarray], bool],
         n_samples: 采样数
         k_neighbors: 连接近邻数
         start, goal: 起点和终点（如果提供则构建路图后搜索）
+        joint_types: 关节类型列表
     """
     if rng is None:
         rng = np.random.RandomState()
 
-    bounds.shape[0]
+    cspace = ConfigurationSpace(bounds, joint_types)
 
     # 采样
     samples = []
     for _ in range(n_samples):
         q = rng.uniform(bounds[:, 0], bounds[:, 1])
         if c_space_free(q):
-            samples.append(q)
+            samples.append(cspace.normalize(q))
     samples = np.array(samples)
 
-    # 构建 k-NN 图
+    # 构建 k-NN 图 (使用 C-space 周期距离)
     adj = defaultdict(list)
     for i, qi in enumerate(samples):
-        dists = np.linalg.norm(samples - qi, axis=1)
+        dists = np.array([cspace.distance(qi, sj) for sj in samples])
         neighbors = np.argsort(dists)[1:k_neighbors+1]
         for j in neighbors:
-            # 边碰撞检测（沿整条边插值）
-            if edge_collision_free(qi, samples[j], c_space_free):
+            if edge_collision_free(qi, samples[j], c_space_free,
+                                   joint_types=cspace.joint_types):
                 adj[i].append((j, dists[j]))
                 adj[j].append((i, dists[j]))  # 无向图：对称连接
 
@@ -370,15 +385,16 @@ def prm_plan(c_space_free: Callable[[np.ndarray], bool],
     result: Dict[str, Any] = {'samples': samples, 'adj': dict(adj),
                                 'path': None, 'success': False}
     if start is not None and goal is not None and len(samples) > 0:
-        start_np = np.asarray(start); goal_np = np.asarray(goal)
-        # 将起终点加入图
+        start_np = cspace.normalize(np.asarray(start))
+        goal_np = cspace.normalize(np.asarray(goal))
         n = len(samples)
         for pt, idx in [(start_np, n), (goal_np, n+1)]:
-            all_pts = np.vstack([samples, pt.reshape(1,-1)])
-            dists = np.linalg.norm(all_pts[:-1] - pt, axis=1)
+            dists = np.array([cspace.distance(samples[k], pt)
+                             for k in range(len(samples))])
             knn_idx = np.argsort(dists)[:k_neighbors]
             for k in knn_idx:
-                if edge_collision_free(samples[k], pt, c_space_free):
+                if edge_collision_free(samples[k], pt, c_space_free,
+                                       joint_types=cspace.joint_types):
                     adj[idx].append((k, dists[k]))
                     adj[k].append((idx, dists[k]))
 

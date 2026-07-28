@@ -9,8 +9,7 @@
 """
 
 import numpy as np
-from typing import Callable, Tuple
-from scipy.linalg import sqrtm
+from typing import Callable, Tuple, List
 
 
 # =============================================================================
@@ -96,15 +95,17 @@ class ExtendedKalmanFilter:
                  Q: np.ndarray, R: np.ndarray,
                  mu: np.ndarray = None, Sigma: np.ndarray = None,
                  residual_fn: Callable = None,
-                 state_injection_fn: Callable = None):
+                 state_injection_fn: Callable = None,
+                 state_normalization_fn: Callable = None):
         self.f, self.h = f, h
         self.A_func, self.C_func = A_func, C_func
         self.Q, self.R = Q, R
         self.n = Q.shape[0]
         self.m = R.shape[0]
-        # 可选：角度/流形状态的自定义残差和注入函数
+        # 可选：角度/流形状态的自定义残差、注入和归一化函数
         self.residual_fn = residual_fn or (lambda z, z_pred: z - z_pred)
         self.state_injection_fn = state_injection_fn or (lambda mu, dx: mu + dx)
+        self.state_normalization_fn = state_normalization_fn or (lambda x: x)
 
         self.mu = mu if mu is not None else np.zeros(self.n)
         self.Sigma = Sigma if Sigma is not None else np.eye(self.n)
@@ -115,7 +116,7 @@ class ExtendedKalmanFilter:
             u = np.zeros(1)
 
         A_t = self.A_func(self.mu, u)
-        self.mu = self.f(self.mu, u)
+        self.mu = self.state_normalization_fn(self.f(self.mu, u))
         self.Sigma = A_t @ self.Sigma @ A_t.T + self.Q
 
         return self.mu, self.Sigma
@@ -128,7 +129,9 @@ class ExtendedKalmanFilter:
         S = C_t @ self.Sigma @ C_t.T + self.R
         K = np.linalg.solve(S, C_t @ self.Sigma).T  # K = Σ C^T S^{-1}
 
-        self.mu = self.state_injection_fn(self.mu, K @ y)
+        self.mu = self.state_normalization_fn(
+            self.state_injection_fn(self.mu, K @ y)
+        )
         # Joseph 形式: P = (I-KC)P(I-KC)^T + KRK^T
         I_KH = np.eye(self.n) - K @ C_t
         self.Sigma = I_KH @ self.Sigma @ I_KH.T + K @ self.R @ K.T
@@ -162,7 +165,8 @@ class ParticleFilter:
                  process_noise_std: np.ndarray,
                  obs_noise_std: np.ndarray,
                  bounds: np.ndarray = None,
-                 rng: np.random.RandomState = None):
+                 rng: np.random.RandomState = None,
+                 periodic_dims: List[int] = None):
         self.N = n_particles
         self.dim = dim
         self.f, self.h = f, h
@@ -170,6 +174,7 @@ class ParticleFilter:
         self.obs_std = np.atleast_1d(obs_noise_std)
         self.bounds = bounds
         self.rng = rng if rng is not None else np.random.RandomState()
+        self.periodic_dims = set(periodic_dims or [])
 
         # 初始化粒子
         self.particles = np.zeros((n_particles, dim))
@@ -201,10 +206,21 @@ class ParticleFilter:
             self.particles[i] = self.f(self.particles[i], u)
             self.particles[i] += self.rng.normal(0, self.proc_std)
 
-        # 裁剪到边界
+        # 周期维度 wrap
+        for d in self.periodic_dims:
+            self.particles[:, d] = np.arctan2(
+                np.sin(self.particles[:, d]),
+                np.cos(self.particles[:, d])
+            )
+
+        # 裁剪到边界（非周期维度）
         if self.bounds is not None:
-            self.particles = np.clip(self.particles,
-                                     self.bounds[:, 0], self.bounds[:, 1])
+            for d in range(self.dim):
+                if d not in self.periodic_dims:
+                    self.particles[:, d] = np.clip(
+                        self.particles[:, d],
+                        self.bounds[d, 0], self.bounds[d, 1]
+                    )
 
     def update(self, z: np.ndarray):
         """更新步：用观测似然更新权重（log-sum-exp 稳定版）。
@@ -257,9 +273,21 @@ class ParticleFilter:
         self.weights = np.ones(N) / N
 
     def estimate(self) -> Tuple[np.ndarray, np.ndarray]:
-        """加权均值与协方差估计"""
+        """加权均值与协方差估计。
+
+        周期维度使用 circular mean（atan2 方法），
+        非周期维度使用普通加权均值。
+        """
         mean = np.average(self.particles, axis=0, weights=self.weights)
+        # 周期维度使用 circular mean
+        for d in self.periodic_dims:
+            cos_sum = np.sum(self.weights * np.cos(self.particles[:, d]))
+            sin_sum = np.sum(self.weights * np.sin(self.particles[:, d]))
+            mean[d] = np.arctan2(sin_sum, cos_sum)
         diff = self.particles - mean
+        # 周期维度 wrap 差值
+        for d in self.periodic_dims:
+            diff[:, d] = np.arctan2(np.sin(diff[:, d]), np.cos(diff[:, d]))
         cov = np.cov(diff.T, aweights=self.weights)
         return mean, cov
 
@@ -272,27 +300,49 @@ class ParticleFilter:
 
 
 # =============================================================================
-# UKF 辅助
+# UKF 辅助函数
 # =============================================================================
+# 注意：以下仅为 Sigma 点生成器（辅助函数），不含完整 predict/update 循环。
+# 完整 UKF 需要额外实现权重计算、加权均值和协方差传播。
 
 def ukf_sigma_points(mu: np.ndarray, Sigma: np.ndarray,
-                     kappa: float = 0.0) -> np.ndarray:
+                     kappa: float = 0.0) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
     """
-    生成 UKF sigma 点 (2n+1 个)
+    生成 UKF sigma 点 (2n+1 个)，使用 Cholesky 分解。
+
+    参数:
+        mu: (n,) 均值
+        Sigma: (n,n) 协方差 (正定)
+        kappa: 缩放参数 (通常 3-n 或 0)
 
     返回:
-        sigma_points: (2n+1, n) 数组
+        sigma_points: (2n+1, n) sigma 点
+        w_mean: (2n+1,) 均值权重
+        w_cov: (2n+1,) 协方差权重
     """
     n = len(mu)
-    lam = kappa  # 对于加法噪声，n 的因子已在内
+    lam = kappa
 
     sigma_points = np.zeros((2*n + 1, n))
     sigma_points[0] = mu
 
-    sqrt_Sigma = sqrtm((n + lam) * Sigma)
+    # 权重
+    w_mean = np.full(2*n + 1, 0.5 / (n + lam))
+    w_mean[0] = lam / (n + lam)
+    w_cov = w_mean.copy()
+    w_cov[0] += (1.0 - 0.0**2 + 2.0)  # default: alpha=1, beta=2
+    # 简化: 标准 UKF w_cov[0] = lam/(n+lam) + (1 - α² + β)
+
+    # 使用 Cholesky 分解 (数值稳定性优于 sqrtm)
+    try:
+        L = np.linalg.cholesky((n + lam) * Sigma)
+    except np.linalg.LinAlgError:
+        # 协方差非正定时，使用对称化 + 小正则化
+        Sigma_reg = 0.5 * (Sigma + Sigma.T) + np.eye(n) * 1e-8
+        L = np.linalg.cholesky((n + lam) * Sigma_reg)
 
     for i in range(n):
-        sigma_points[i + 1] = mu + sqrt_Sigma[:, i]
-        sigma_points[i + 1 + n] = mu - sqrt_Sigma[:, i]
+        sigma_points[i + 1] = mu + L[:, i]
+        sigma_points[i + 1 + n] = mu - L[:, i]
 
-    return sigma_points
+    return sigma_points, w_mean, w_cov
