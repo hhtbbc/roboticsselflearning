@@ -575,11 +575,13 @@ def potential_field_plan(q_start: np.ndarray, q_goal: np.ndarray,
         f_rep = np.zeros_like(q)
         U_rep = 0
         for obs in obstacles:
-            d = np.linalg.norm(q - obs['center'])
-            if d < rho_0 and d > 1e-10:
-                direction = (q - obs['center']) / d
-                f_rep += k_rep * (1/d - 1/rho_0) * (1/d**2) * direction
-                U_rep += 0.5 * k_rep * (1/d - 1/rho_0)**2
+            obs_radius = obs.get('radius', 0.0)
+            # 到障碍物表面的净距离
+            rho = np.linalg.norm(q - obs['center']) - obs_radius
+            if rho < rho_0 and rho > 1e-10:
+                direction = (q - obs['center']) / np.linalg.norm(q - obs['center'])
+                f_rep += k_rep * (1/rho - 1/rho_0) * (1/rho**2) * direction
+                U_rep += 0.5 * k_rep * (1/rho - 1/rho_0)**2
 
         f_total = f_att + f_rep
         U_history.append(U_att + U_rep)

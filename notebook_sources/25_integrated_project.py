@@ -64,14 +64,13 @@ dyn = TwoLinkArmDynamics(m1=1.0, m2=1.0, l1=l1, l2=l2, g=9.81)
 
 # ====== 2. 运动规划 (C-space RRT) ======
 obstacle_centers = np.array([[0.8, 0.3], [-0.5, 0.6], [1.2, -0.4]])
-obstacle_radii = np.array([0.10, 0.08, 0.12])
-safety_margin = 0.01
+obstacle_radii = np.array([0.08, 0.06, 0.10])
+safety_margin = 0.005
 
 def arm_collision_free(q):
-    """检查 2R 臂是否与圆形障碍物碰撞（快速版：检查关节点+中点）。"""
+    """快速碰撞检测：关节点、末端和连杆中点采样（用于 RRT 搜索）"""
     x1 = l1*np.cos(q[0]); y1 = l1*np.sin(q[0])
     x2 = x1 + l2*np.cos(q[0]+q[1]); y2 = y1 + l2*np.sin(q[0]+q[1])
-    # 检查关节点、末端和两连杆中点
     pts = np.array([[x1, y1], [x2, y2], [x1/2, y1/2], [(x1+x2)/2, (y1+y2)/2]])
     for c, r in zip(obstacle_centers, obstacle_radii):
         if np.any(np.linalg.norm(pts - c, axis=1) < r + link_radius + safety_margin):
@@ -79,10 +78,7 @@ def arm_collision_free(q):
     return True
 
 def arm_collision_free_precise(q):
-    """检查 2R 臂是否与圆形障碍物碰撞（精确版：点到线段距离）。
-
-    用于对规划路径的最终验证。
-    """
+    """精确碰撞检测：点到线段距离（用于路径和轨迹最终验证）"""
     x1 = l1*np.cos(q[0]); y1 = l1*np.sin(q[0])
     x2 = x1 + l2*np.cos(q[0]+q[1]); y2 = y1 + l2*np.sin(q[0]+q[1])
     for c, r in zip(obstacle_centers, obstacle_radii):
@@ -95,8 +91,8 @@ def arm_collision_free_precise(q):
     return True
 
 bounds_q = np.array([[-np.pi, np.pi], [-np.pi, np.pi]])
-q_start = np.array([-0.3, 0.5])
-q_goal = np.array([0.8, -0.2])
+q_start = np.array([0.5, 0.3])
+q_goal = np.array([1.0, 1.0])
 
 # RRT 规划（失败时自动重试，增加迭代次数和步长）
 path_rrt = None
@@ -275,7 +271,7 @@ print(f"最大力矩:                   J1={np.max(np.abs(tau_hist[:,0])):.2f}, 
 # 验证实际轨迹是否无碰撞（采样检查）
 # 验证实际闭环轨迹（accidental drift from tracking error）
 true_step = max(1, len(q_true_hist) // 500)
-true_collisions = sum(not arm_collision_free_precise(q_true_hist[i])
+true_collisions = sum(not arm_collision_free(q_true_hist[i])
                        for i in range(0, len(q_true_hist), true_step))
 n_true_checked = len(range(0, len(q_true_hist), true_step))
 print(f"闭环轨迹精确碰撞检查: {true_collisions}/{n_true_checked} ({100*true_collisions/n_true_checked:.1f}%) 边界穿透")

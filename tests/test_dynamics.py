@@ -3,6 +3,7 @@ import numpy as np
 import sys; sys.path.insert(0, '.')
 from src.robotics_learning.dynamics import TwoLinkArmDynamics, simulate_dynamics
 
+RNG = np.random.RandomState(42)
 ATOL = 1e-10
 
 
@@ -14,13 +15,13 @@ class TestMassMatrix:
 
     def test_symmetry(self):
         for _ in range(10):
-            q = np.random.uniform(-np.pi, np.pi, 2)
+            q = RNG.uniform(-np.pi, np.pi, 2)
             M = self.dyn.mass_matrix(q)
             assert np.allclose(M, M.T, atol=ATOL), f"M not symmetric at q={q}"
 
     def test_positive_definite(self):
         for _ in range(10):
-            q = np.random.uniform(-np.pi, np.pi, 2)
+            q = RNG.uniform(-np.pi, np.pi, 2)
             M = self.dyn.mass_matrix(q)
             eigvals = np.linalg.eigvalsh(M)
             assert np.all(eigvals > 0), f"M not PD at q={q}, eig={eigvals}"
@@ -28,8 +29,8 @@ class TestMassMatrix:
     def test_Mdot_minus_2C_skew(self):
         """Ṁ - 2C 反对称性"""
         for _ in range(10):
-            q = np.random.uniform(-np.pi, np.pi, 2)
-            qd = np.random.uniform(-2, 2, 2)
+            q = RNG.uniform(-np.pi, np.pi, 2)
+            qd = RNG.uniform(-2, 2, 2)
             M = self.dyn.mass_matrix(q)
             C = self.dyn.coriolis_matrix(q, qd)
             # 数值差分 M_dot
@@ -46,7 +47,7 @@ class TestMassMatrix:
         """g(q) = ∂P/∂q (数值验证)"""
         eps = 1e-6
         for _ in range(5):
-            q = np.random.uniform(-np.pi/2, np.pi/2, 2)
+            q = RNG.uniform(-np.pi/2, np.pi/2, 2)
             g = self.dyn.gravity_vector(q)
 
             # 数值势能梯度

@@ -12,7 +12,7 @@
 # ---
 
 # %% [markdown]
-# # Notebook 14：时间参数化与时间最优沿路径规划 (TOPP)
+# # Notebook 14：时间参数化与沿路径规划 (TOPP)
 #
 # ## 1. 定位
 # 运动规划器输出几何路径 $\mathbf{q}(s)$。时间参数化回答"多快走"——找到 $s(t)$ 使路径在时间上满足所有速度/加速度约束且总时间最短。
@@ -60,10 +60,10 @@
 # $$\alpha = \max_i \alpha_i, \quad \beta = \min_i \beta_i$$
 
 # %% [markdown]
-# ### 4.3 前向 + 后向积分
+# ### 4.3 前向 + 后向积分（教学版近似）
 # 1. 前向传播 (最大加速): 从 $(0, \dot{s}_0)$ 开始，用 $\beta(s, \dot{s})$ 加速
 # 2. 后向传播 (最大减速): 从 $(1, \dot{s}_f)$ 开始，用 $\alpha(s, \dot{s})$ 减速
-# 3. 下包络 = 时间最优 $\dot{s}(s)$
+# 3.  $\dot{s}(s)$
 # 4. 使用 $\dot{s}_{k+1}^2 = \dot{s}_k^2 + 2\ddot{s}\Delta s$ (稳定递推)
 
 # %% [markdown]
@@ -157,7 +157,7 @@ for i in range(n_s-2, -1, -1):
     s_dot_bwd[i] = np.sqrt(max(0, s_dot_sq))
     s_dot_bwd[i] = min(s_dot_bwd[i], s_dot_mvc[i])
 
-# === 时间最优 = min(前向, 后向, MVC) ===
+# ===  = min(前向, 后向, MVC) ===
 s_dot_opt = np.minimum(np.minimum(s_dot_fwd, s_dot_bwd), s_dot_mvc)
 
 # === 从 ṡ(s) 计算 q(t) ===
@@ -224,7 +224,7 @@ v_ok = np.all(np.abs(q_dot_actual) <= q_dot_max * 1.01, axis=1)
 a_ok = np.all(np.abs(q_ddot_actual) <= q_ddot_max * 1.01, axis=1)
 print(f"TOPP 总时间: {t_path[-1]:.3f}s, 均匀: {t_uniform[-1]:.3f}s, 节省: {(1-t_path[-1]/t_uniform[-1])*100:.1f}%")
 print(f"可行性: 速度 {np.mean(v_ok)*100:.0f}% 满足, 加速度 {np.mean(a_ok)*100:.0f}% 满足")
-print("⚠ 教学版前向-后向近似不能保证严格时间最优或全部约束满足。")
+print("⚠ 教学版前向-后向近似不能保证严格或全部约束满足。")
 print("  生产级 TOPP 请使用 TOPP-RA 或 toppra 库。")
 
 # %% [markdown]
