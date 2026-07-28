@@ -145,7 +145,12 @@ def axis_angle_to_rot(axis: np.ndarray, angle: float) -> np.ndarray:
 
     R = I + sin(θ) [k]_× + (1 − cos(θ)) [k]_×²
     """
-    axis = axis / np.linalg.norm(axis)
+    axis_norm = np.linalg.norm(axis)
+    if axis_norm < 1e-15:
+        if abs(angle) < 1e-15:
+            return np.eye(3)
+        raise ValueError(f"Rotation axis cannot be zero for nonzero angle {angle}")
+    axis = axis / axis_norm
     K = skew(axis)
     R = np.eye(3) + np.sin(angle) * K + (1 - np.cos(angle)) * (K @ K)
     return R
@@ -192,8 +197,9 @@ class Quaternion:
         """从轴角构造四元数"""
         axis_norm = np.linalg.norm(axis)
         if axis_norm < 1e-15:
-            # 零旋转轴: 返回单位四元数
-            return cls(1.0, 0.0, 0.0, 0.0)
+            if abs(angle) < 1e-15:
+                return cls(1.0, 0.0, 0.0, 0.0)  # 零旋转
+            raise ValueError(f"Rotation axis cannot be zero for nonzero angle {angle}")
         axis = axis / axis_norm
         half = angle / 2
         return cls(np.cos(half),
@@ -211,8 +217,9 @@ class Quaternion:
         return np.array([self.w, self.x, self.y, self.z])
 
     def to_rot(self) -> np.ndarray:
-        """四元数 → 旋转矩阵"""
-        w, x, y, z = self.w, self.x, self.y, self.z
+        """四元数 → 旋转矩阵（自动归一化非单位输入）"""
+        q = self if self.is_unit() else self.normalize()
+        w, x, y, z = q.w, q.x, q.y, q.z
         return np.array([
             [1 - 2*y*y - 2*z*z, 2*x*y - 2*w*z,     2*x*z + 2*w*y],
             [2*x*y + 2*w*z,     1 - 2*x*x - 2*z*z, 2*y*z - 2*w*x],
@@ -221,10 +228,6 @@ class Quaternion:
 
     def conjugate(self) -> 'Quaternion':
         return Quaternion(self.w, -self.x, -self.y, -self.z)
-
-    def inverse(self) -> 'Quaternion':
-        """单位四元数的逆 = 共轭"""
-        return self.conjugate()
 
     def normalize(self) -> 'Quaternion':
         norm = np.sqrt(self.w**2 + self.x**2 + self.y**2 + self.z**2)
@@ -245,9 +248,10 @@ class Quaternion:
                          -self.y/norm_sq, -self.z/norm_sq)
 
     def rotate_vector(self, v: np.ndarray) -> np.ndarray:
-        """用四元数旋转向量 (q ⊗ v ⊗ q*)"""
+        """用四元数旋转向量 (q ⊗ v ⊗ q*)，自动归一化非单位四元数"""
+        q = self if self.is_unit() else self.normalize()
         q_v = Quaternion(0, v[0], v[1], v[2])
-        q_result = self * q_v * self.conjugate()
+        q_result = q * q_v * q.conjugate()
         return np.array([q_result.x, q_result.y, q_result.z])
 
     def __mul__(self, other: 'Quaternion') -> 'Quaternion':

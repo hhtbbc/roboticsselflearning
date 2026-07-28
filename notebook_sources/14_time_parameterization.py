@@ -104,8 +104,8 @@ fp_vals = np.column_stack([cs1(s_vals, 1), cs2(s_vals, 1)])
 fpp_vals = np.column_stack([cs1(s_vals, 2), cs2(s_vals, 2)])
 
 # 关节约束
-q_dot_max = np.array([3.0, 4.0])
-q_ddot_max = np.array([8.0, 10.0])
+q_dot_max = np.array([4.0, 5.0])
+q_ddot_max = np.array([15.0, 18.0])
 
 # === MVC: 速度约束 ===
 s_dot_mvc = np.full(n_s, np.inf)
@@ -116,15 +116,14 @@ for i in range(n_s):
 
 # === 加速度约束 → α(s,ṡ), β(s,ṡ) ===
 def compute_alpha_beta(s_idx, s_dot_val):
-    """计算给定 (s, ṡ) 处的加速度约束 α ≤ s̈ ≤ β"""
+    """计算给定 (s, ṡ) 处的加速度约束 α ≤ s̈ ≤ β; 返回 (α, β, feasible)"""
     alpha = -np.inf; beta = np.inf
     for d in range(2):
         fp = fp_vals[s_idx, d]; fpp = fpp_vals[s_idx, d]
         term = fpp * s_dot_val**2
         if abs(fp) < 1e-10:
-            # fp=0: 加速度约束退化为 |f''ṡ²| ≤ q̈_max
-            if abs(term) > q_ddot_max[d]:
-                alpha = max(alpha, 1e10); beta = min(beta, -1e10)  # 不可行
+            if abs(term) > q_ddot_max[d] + 1e-6:
+                return 0.0, 0.0, False  # 不可行
             continue
         lo = (-q_ddot_max[d] - term) / fp
         hi = (q_ddot_max[d] - term) / fp
@@ -132,25 +131,33 @@ def compute_alpha_beta(s_idx, s_dot_val):
             alpha = max(alpha, lo); beta = min(beta, hi)
         else:
             alpha = max(alpha, hi); beta = min(beta, lo)
-    return alpha, beta
+    return alpha, beta, alpha <= beta + 1e-6
 
 # === 前向传播 (最大加速) ===
 s_dot_fwd = np.zeros(n_s); s_dot_fwd[0] = 0.0
 for i in range(1, n_s):
-    _, beta = compute_alpha_beta(i-1, s_dot_fwd[i-1])
-    # s_dot_{k+1}² = s_dot_k² + 2 * s̈ * Δs (稳定递推)
-    # beta < 0 意味着必须减速 — 不能截断为0
+    _, beta, feasible = compute_alpha_beta(i-1, s_dot_fwd[i-1])
+    if not feasible:
+        print(f"⚠ TOPP 不可行 at s={s_vals[i-1]:.4f} (forward); α>β. 停止传播。")
+        break
     s_dot_sq = s_dot_fwd[i-1]**2 + 2 * beta * ds
+    if s_dot_sq < -1e-10:
+        print(f"⚠ Forward unreachable at s={s_vals[i]:.4f}; 停止传播。")
+        break
     s_dot_fwd[i] = np.sqrt(max(0, s_dot_sq))
     s_dot_fwd[i] = min(s_dot_fwd[i], s_dot_mvc[i])
 
 # === 后向传播 (最大减速) ===
 s_dot_bwd = np.zeros(n_s); s_dot_bwd[-1] = 0.0
 for i in range(n_s-2, -1, -1):
-    alpha, _ = compute_alpha_beta(i+1, s_dot_bwd[i+1])
-    # s_dot_k² = s_dot_{k+1}² - 2 * s̈ * Δs (向后积分)
-    # alpha > 0 意味着加速度存在正下界 — 不能截断为0
+    alpha, _, feasible = compute_alpha_beta(i+1, s_dot_bwd[i+1])
+    if not feasible:
+        print(f"⚠ TOPP 不可行 at s={s_vals[i+1]:.4f} (backward); α>β. 停止传播。")
+        break
     s_dot_sq = s_dot_bwd[i+1]**2 - 2 * alpha * ds
+    if s_dot_sq < -1e-10:
+        print(f"⚠ Backward unreachable at s={s_vals[i]:.4f}; 停止传播。")
+        break
     s_dot_bwd[i] = np.sqrt(max(0, s_dot_sq))
     s_dot_bwd[i] = min(s_dot_bwd[i], s_dot_mvc[i])
 
