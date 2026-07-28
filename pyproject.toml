@@ -28,6 +28,11 @@ dev = [
     "nbconvert",
 ]
 
+[tool.ruff.lint]
+ignore = ["E702", "E731"]
+[tool.ruff]
+exclude = [".venv", ".git"]
+
 [tool.jupytext]
 formats = "notebooks//ipynb,notebook_sources//py:percent"
 notebook_metadata_filter = "-all"

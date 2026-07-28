@@ -1,7 +1,6 @@
 #!/usr/bin/env python3
 """Jupytext 同步脚本：将 notebook_sources/*.py 同步为 notebooks/*.ipynb"""
 import subprocess
-import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent

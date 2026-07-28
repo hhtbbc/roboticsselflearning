@@ -2,12 +2,11 @@
 import numpy as np
 import sys; sys.path.insert(0, '.')
 from src.robotics_learning.transforms import (
-    axis_angle_to_rot, rot_x, rot_z, so3_log, homogenous_transform, inv_homogenous
+    rot_z, so3_log
 )
 from src.robotics_learning.kinematics import (
     dh_transform, forward_kinematics,
-    ik_2r_geometric, ik_numerical,
-    compute_geometric_jacobian
+    ik_2r_geometric, compute_geometric_jacobian
 )
 
 RNG = np.random.RandomState(42)

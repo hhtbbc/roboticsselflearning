@@ -184,27 +184,6 @@ def rnea_2r(dyn: TwoLinkArmDynamics, q, q_dot, q_ddot,
     返回:
         tau: (2,) 关节力矩
     """
-    l1, l2 = dyn.l1, dyn.l2
-    lc1, lc2 = dyn.lc1, dyn.lc2
-    m1, m2 = dyn.m1, dyn.m2
-    I1, I2 = dyn.I1, dyn.I2
-
-    c1, s1 = np.cos(q[0]), np.sin(q[0])
-    c12, s12 = np.cos(q[0] + q[1]), np.sin(q[0] + q[1])
-
-    # ---- 向外递推: 计算每个连杆的运动学 ----
-    # 连杆 1
-    omega1 = np.array([0, 0, q_dot[0]])
-    omega_dot1 = np.array([0, 0, q_ddot[0]])
-    # 基座原点线加速度（考虑重力）
-    v_dot0 = -g_vec  # g 朝下，加速度计测量 a-g
-    v_dot1_c = (np.cross(omega_dot1, np.array([lc1 * c1, lc1 * s1, 0]))
-                + np.cross(omega1, np.cross(omega1, np.array([lc1 * c1, lc1 * s1, 0]))))
-    v_dot1 = v_dot0 + v_dot1_c  # 简化...
-
-    # 连杆 2
-    omega2 = np.array([0, 0, q_dot[0] + q_dot[1]])
-    omega_dot2 = np.array([0, 0, q_ddot[0] + q_ddot[1]])
-
-    # 由于这是简化版，返回拉格朗日结果（完整 RNEA 在 Notebook 11 中实现）
+    # Simplified RNEA — delegates to Lagrangian ID for correctness.
+    # Full recursive implementation is in Notebook 11.
     return dyn.inverse_dynamics(q, q_dot, q_ddot)

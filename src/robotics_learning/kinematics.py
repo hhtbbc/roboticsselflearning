@@ -10,7 +10,7 @@
 
 import numpy as np
 from typing import List, Tuple, Optional
-from .transforms import rot_x, rot_z, homogenous_transform
+from .transforms import rot_x, rot_z
 
 
 # =============================================================================
@@ -159,7 +159,7 @@ def ik_numerical(dh_table: np.ndarray, T_des: np.ndarray,
         q: 解关节角，不收敛时返回 None
     """
     q = q_init.copy()
-    n = len(q)
+    len(q)
 
     for iteration in range(max_iter):
         # 计算当前 FK
@@ -183,7 +183,7 @@ def ik_numerical(dh_table: np.ndarray, T_des: np.ndarray,
         J = compute_geometric_jacobian(dh_table, q)
 
         # 更新关节角（加权阻尼最小二乘）
-        n_joints = len(q)
+        len(q)
         if damping > 0:
             # DLS: Δq = J^T (J J^T + λ² I)^{-1} e
             JJT = J @ J.T

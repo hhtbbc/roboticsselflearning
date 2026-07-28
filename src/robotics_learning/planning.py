@@ -250,7 +250,7 @@ def prm_plan(c_space_free: Callable[[np.ndarray], bool],
     if rng is None:
         rng = np.random.RandomState()
 
-    dim = bounds.shape[0]
+    bounds.shape[0]
 
     # 采样
     samples = []
@@ -300,13 +300,17 @@ def prm_plan(c_space_free: Callable[[np.ndarray], bool],
                     path_ids.append(parent[path_ids[-1]])
                 path_pts = []
                 for pid in reversed(path_ids):
-                    if pid < n: path_pts.append(samples[pid])
-                    elif pid == n: path_pts.append(start_np)
-                    else: path_pts.append(goal_np)
+                    if pid < n:
+                        path_pts.append(samples[pid])
+                    elif pid == n:
+                        path_pts.append(start_np)
+                    else:
+                        path_pts.append(goal_np)
                 result['path'] = path_pts
                 result['success'] = True
                 break
-            if d > dist_to.get(u, np.inf): continue
+            if d > dist_to.get(u, np.inf):
+                continue
             for v, w in adj.get(u, []):
                 nd = d + w
                 if nd < dist_to.get(v, np.inf):
@@ -359,7 +363,7 @@ def rrt_plan(c_space_free: Callable[[np.ndarray], bool],
     if not c_space_free(goal_np):
         raise ValueError(f"Goal {goal} in collision")
 
-    dim = bounds.shape[0]
+    bounds.shape[0]
     nodes = [RRTNode(start_np)]
 
     for _ in range(max_iter):
@@ -432,8 +436,6 @@ def rrt_star_plan(c_space_free, bounds, start, goal,
 
     dim = bounds.shape[0]
     nodes = [RRTNode(np.array(start), cost=0.0)]
-    goal_node = RRTNode(np.array(goal))
-
     if search_radius is None:
         search_radius = 3.0 * step_size
 

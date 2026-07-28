@@ -11,7 +11,7 @@
 """
 
 import numpy as np
-from typing import Tuple, Optional
+from typing import Tuple
 
 
 # =============================================================================
@@ -448,8 +448,6 @@ def se3_log(T: np.ndarray) -> np.ndarray:
 
     if theta < 1e-8:
         return np.concatenate([omega, p])
-
-    axis = omega / theta
 
     # J_l^{-1}(ω) = I - ½[ω]× + α·[ω]×²  (Barfoot Eq 7.150)
     # where [ω]× = θ·[axis]× = θ·K

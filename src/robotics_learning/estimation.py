@@ -9,7 +9,7 @@
 """
 
 import numpy as np
-from typing import Callable, Tuple, List
+from typing import Callable, Tuple
 from scipy.linalg import sqrtm
 
 
