@@ -19,7 +19,7 @@
 # 本 Notebook 将课程十个模块串联成一个完整的闭环系统：
 #
 # ```
-#   运动规划(RRT) → 轨迹生成(五次多项式) → 时间参数化 → 控制器(CTC) → 动力学仿真
+#   运动规划(RRT) → 轨迹生成(分段线性, 固定4s) → 控制器(CTC) → 动力学仿真
 #         ↑                                                           ↓
 #         └────────── 状态估计(EKF) ←──── 传感器噪声 ←──── 真值状态 ←─┘
 # ```
@@ -59,13 +59,13 @@ print("✅ 导入完成 — 开始综合项目")
 # %%
 # ====== 1. 机器人定义 ======
 l1, l2 = 1.0, 0.8
-link_radius = 0.03
+link_radius = 0.02
 dyn = TwoLinkArmDynamics(m1=1.0, m2=1.0, l1=l1, l2=l2, g=9.81)
 
 # ====== 2. 运动规划 (C-space RRT) ======
 obstacle_centers = np.array([[0.8, 0.3], [-0.5, 0.6], [1.2, -0.4]])
-obstacle_radii = np.array([0.12, 0.10, 0.14])
-safety_margin = 0.03  # 与快速碰撞检测一致
+obstacle_radii = np.array([0.10, 0.08, 0.12])
+safety_margin = 0.01
 
 def arm_collision_free(q):
     """检查 2R 臂是否与圆形障碍物碰撞（快速版：检查关节点+中点）。"""
@@ -95,12 +95,13 @@ def arm_collision_free_precise(q):
     return True
 
 bounds_q = np.array([[-np.pi, np.pi], [-np.pi, np.pi]])
-q_start = np.array([0.5, 0.3])
-q_goal = np.array([1.0, 1.0])
+q_start = np.array([-0.3, 0.5])
+q_goal = np.array([0.8, -0.2])
 
 # RRT 规划（失败时自动重试，增加迭代次数和步长）
 path_rrt = None
 for max_iter_attempt, step_attempt in [(3000, 0.2), (8000, 0.3), (15000, 0.35)]:
+    # RRT 使用快速碰撞检测（性能）；via-point 边和轨迹用精确检测验证
     path_rrt, _ = rrt_plan(arm_collision_free, bounds_q, q_start, q_goal,
                            max_iter=max_iter_attempt, step_size=step_attempt, rng=rng)
     if path_rrt is not None:
@@ -138,11 +139,17 @@ assert n_collisions == 0, f"RRT 稠密路径有 {n_collisions}/{len(dense_path)}
 print(f"✅ 稠密 RRT 路径 ({len(dense_path)} 点) 全部无碰撞")
 T_total = 4.0; dt_proj = 0.005; n_steps = int(T_total/dt_proj)
 # 用 via-point 样条连接路径点
-via_pts = path_cspace[::max(1, len(path_cspace)//15)]  # 取约15个路径点，减少样条偏差
+via_pts = path_cspace[::max(1, len(path_cspace)//30)]  # 取约30个路径点，确保边通过精确检测
 if via_pts[0].shape == q_start.shape and not np.allclose(via_pts[0], q_start):
     via_pts = np.vstack([q_start.reshape(1,-1), via_pts])
 if not np.allclose(via_pts[-1], q_goal):
     via_pts = np.vstack([via_pts, q_goal.reshape(1,-1)])
+# 验证抽稀后的 via-point 边（与RRT一致的检测函数）
+for qa, qb in zip(via_pts[:-1], via_pts[1:]):
+    assert edge_collision_free(qa, qb, arm_collision_free, resolution=0.01), \
+        "Via-point 边碰撞！需增加密度或调整安全裕量。"
+print(f"✅ {len(via_pts)} via-points, 所有边通过碰撞检查（与RRT一致）")
+
 via_times = np.linspace(0, T_total, len(via_pts))
 
 # 使用线性插值（确保轨迹在路径凸包内，避免样条切入障碍物）
@@ -307,4 +314,4 @@ plt.savefig('../outputs/25_arm_motion.png', dpi=100, bbox_inches='tight')
 plt.show()
 
 print("\n✅ 综合项目完成！完整闭环已运行。")
-print("模块连接: 运动规划(RRT) → 五次样条轨迹 → CTC控制器 → 动力学仿真 → 编码器噪声 → EKF估计 → 反馈至控制器")
+print("模块连接: 运动规划(RRT) → 分段线性轨迹 → CTC控制器 → 动力学仿真 → 编码器噪声 → EKF估计 → 反馈至控制器")

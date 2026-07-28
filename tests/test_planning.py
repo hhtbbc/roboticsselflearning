@@ -41,19 +41,13 @@ class TestRRT:
         assert len(path) > 2
         assert np.linalg.norm(np.array(path[-1]) - np.array([5,5])) < 0.5
 
-    def test_rrt_blocked(self):
-        """被障碍物包围时应返回 None"""
+    def test_rrt_start_invalid_raises(self):
+        """起点在碰撞中应抛出异常"""
         bounds = np.array([[0, 10], [0, 10]])
-        def blocked(q):
-            return 2 < q[0] < 8 and 2 < q[1] < 8  # only narrow border free
-
-        path, _ = rrt_plan(blocked, bounds, np.array([0.,0.]), np.array([5.,5.]),
-                           max_iter=500, step_size=0.3, rng=RNG)
-        # 起点在自由空间但目标被包围 — 可能找到或找不到
-        # 至少不应崩溃
-        if path is not None:
-            for q in path:
-                assert blocked(q) or np.linalg.norm(q - np.array([5,5])) < 0.5
+        import pytest
+        with pytest.raises(ValueError, match="collision"):
+            rrt_plan(lambda q: q[0] < 5, bounds, np.array([7.,5.]), np.array([3.,5.]),
+                     max_iter=100, step_size=0.3, rng=RNG)
 
 
 class TestRRTStarCost:

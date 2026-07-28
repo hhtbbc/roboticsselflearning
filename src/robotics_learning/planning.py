@@ -349,8 +349,18 @@ def rrt_plan(c_space_free: Callable[[np.ndarray], bool],
     if rng is None:
         rng = np.random.RandomState()
 
+    start_np = np.asarray(start); goal_np = np.asarray(goal)
+    if not (np.all(bounds[:, 0] <= start_np) and np.all(start_np <= bounds[:, 1])):
+        raise ValueError(f"Start {start} outside bounds {bounds}")
+    if not c_space_free(start_np):
+        raise ValueError(f"Start {start} in collision")
+    if not (np.all(bounds[:, 0] <= goal_np) and np.all(goal_np <= bounds[:, 1])):
+        raise ValueError(f"Goal {goal} outside bounds {bounds}")
+    if not c_space_free(goal_np):
+        raise ValueError(f"Goal {goal} in collision")
+
     dim = bounds.shape[0]
-    nodes = [RRTNode(np.array(start))]
+    nodes = [RRTNode(start_np)]
 
     for _ in range(max_iter):
         # 采样

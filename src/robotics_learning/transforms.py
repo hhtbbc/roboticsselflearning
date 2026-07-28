@@ -268,7 +268,9 @@ class Quaternion:
 
 
 def slerp(q1: Quaternion, q2: Quaternion, t: float) -> Quaternion:
-    """球面线性插值 (Spherical Linear Interpolation)"""
+    """球面线性插值 (Spherical Linear Interpolation)。自动归一化输入。"""
+    q1 = q1.normalize()
+    q2 = q2.normalize()
     # 确保走最短路径
     cos_omega = q1.w*q2.w + q1.x*q2.x + q1.y*q2.y + q1.z*q2.z
     cos_omega = np.clip(cos_omega, -1.0, 1.0)

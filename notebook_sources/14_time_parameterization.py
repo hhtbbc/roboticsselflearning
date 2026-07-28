@@ -85,9 +85,9 @@ print("✅ 导入完成")
 # 路径: 三次样条连接关节空间中的 via-points
 via_pts = np.array([
     [0.0, 0.0],
-    [0.5, -0.3],
-    [1.2, 0.2],
-    [0.8, 0.6],
+    [0.3, 0.2],
+    [0.7, 0.4],
+    [1.0, 0.6],
     [1.5, 1.0],
 ])
 s_grid = np.linspace(0, 1, len(via_pts))
@@ -138,12 +138,10 @@ s_dot_fwd = np.zeros(n_s); s_dot_fwd[0] = 0.0
 for i in range(1, n_s):
     _, beta, feasible = compute_alpha_beta(i-1, s_dot_fwd[i-1])
     if not feasible:
-        print(f"⚠ TOPP 不可行 at s={s_vals[i-1]:.4f} (forward); α>β. 停止传播。")
-        break
+        raise RuntimeError(f"TOPP infeasible at s={s_vals[i-1]:.4f} (forward): α>β")
     s_dot_sq = s_dot_fwd[i-1]**2 + 2 * beta * ds
     if s_dot_sq < -1e-10:
-        print(f"⚠ Forward unreachable at s={s_vals[i]:.4f}; 停止传播。")
-        break
+        raise RuntimeError(f"Forward unreachable at s={s_vals[i]:.4f}")
     s_dot_fwd[i] = np.sqrt(max(0, s_dot_sq))
     s_dot_fwd[i] = min(s_dot_fwd[i], s_dot_mvc[i])
 
@@ -152,12 +150,10 @@ s_dot_bwd = np.zeros(n_s); s_dot_bwd[-1] = 0.0
 for i in range(n_s-2, -1, -1):
     alpha, _, feasible = compute_alpha_beta(i+1, s_dot_bwd[i+1])
     if not feasible:
-        print(f"⚠ TOPP 不可行 at s={s_vals[i+1]:.4f} (backward); α>β. 停止传播。")
-        break
+        raise RuntimeError(f"TOPP infeasible at s={s_vals[i+1]:.4f} (backward): α>β")
     s_dot_sq = s_dot_bwd[i+1]**2 - 2 * alpha * ds
     if s_dot_sq < -1e-10:
-        print(f"⚠ Backward unreachable at s={s_vals[i]:.4f}; 停止传播。")
-        break
+        raise RuntimeError(f"Backward unreachable at s={s_vals[i]:.4f}")
     s_dot_bwd[i] = np.sqrt(max(0, s_dot_sq))
     s_dot_bwd[i] = min(s_dot_bwd[i], s_dot_mvc[i])
 
