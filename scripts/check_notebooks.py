@@ -153,7 +153,6 @@ def check_nbconvert(args):
 
     results = []
     for f in files:
-        out_f = OUTPUT_DIR / f.name
         print(f"Checking: {f.name} ... ", end="", flush=True)
         try:
             result = subprocess.run(
@@ -161,7 +160,7 @@ def check_nbconvert(args):
                  "--execute", str(f),
                  "--ExecutePreprocessor.timeout", "300",
                  "--ExecutePreprocessor.kernel_name", "robotics-learning",
-                 "--output", str(out_f)],
+                 "--output-dir", str(OUTPUT_DIR)],
                 capture_output=True, text=True, timeout=360, cwd=ROOT
             )
             success = result.returncode == 0

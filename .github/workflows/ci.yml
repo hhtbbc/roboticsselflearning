@@ -9,6 +9,8 @@ on:
 jobs:
   test:
     runs-on: ubuntu-latest
+    env:
+      MPLBACKEND: Agg
     steps:
       - uses: actions/checkout@v4
       - uses: astral-sh/setup-uv@v4
@@ -24,14 +26,16 @@ jobs:
 
       # Notebook sync consistency: sources must match committed .ipynb
       - run: uv run python scripts/sync_notebooks.py
-      - run: git diff --exit-code -- notebooks/
-        name: Check notebook sources are in sync with .ipynb
+      - name: Check notebook sources are in sync with .ipynb
+        run: git diff --exit-code -- notebooks/
 
       # Install kernel for notebook smoke tests
       - run: uv run python -m ipykernel install --user --name robotics-learning --display-name "Python (robotics-learning)"
 
-      # Smoke-test representative notebooks (nbconvert mode)
+      # Smoke-test key notebooks (NB14 TOPP + NB25 integrated project)
+      # These use nbconvert --execute; a real failure (syntax/assert) fails CI
       - name: Smoke test notebooks
+        timeout-minutes: 10
         run: |
           uv run python scripts/check_notebooks.py --nbconvert \
             14_time_parameterization.ipynb \
