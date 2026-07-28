@@ -91,3 +91,67 @@ class TestAStar:
         grid = create_grid_map(10, 10, [(0, 0, 10, 10)])
         path, _ = astar(grid, (0, 0), (9, 9))
         assert path is None
+
+
+class TestConfigurationSpace:
+    """ConfigurationSpace 和 validate_planning_problem 测试"""
+
+    def test_distance_periodic(self):
+        from src.robotics_learning.planning import ConfigurationSpace
+        bounds = np.array([[-np.pi, np.pi], [-np.pi, np.pi]])
+        cspace = ConfigurationSpace(bounds, ['revolute', 'revolute'])
+        q1 = np.array([np.deg2rad(179), 0.0])
+        q2 = np.array([np.deg2rad(-179), 0.0])
+        d = cspace.distance(q1, q2)
+        assert abs(d - np.deg2rad(2)) < 1e-6
+
+    def test_steer_shortest_arc(self):
+        from src.robotics_learning.planning import ConfigurationSpace
+        bounds = np.array([[-np.pi, np.pi]])
+        cspace = ConfigurationSpace(bounds, ['revolute'])
+        q_near = np.array([np.deg2rad(179)])
+        q_rand = np.array([np.deg2rad(-179)])
+        q_new = cspace.steer(q_near, q_rand, 0.1)
+        # 应走短弧 (2°) 方向 → q_new 应在 179° 附近向 -179° 走一步
+        assert q_new[0] < -np.pi + 0.5 or q_new[0] > np.pi - 0.5
+
+    def test_within_bounds(self):
+        from src.robotics_learning.planning import ConfigurationSpace
+        bounds = np.array([[0.0, 1.0], [-1.0, 1.0]])
+        cspace = ConfigurationSpace(bounds)
+        assert cspace.within_bounds(np.array([0.5, 0.0]))
+        assert not cspace.within_bounds(np.array([1.5, 0.0]))
+
+    def test_validate_planning_success(self):
+        from src.robotics_learning.planning import validate_planning_problem
+        bounds = np.array([[0, 10], [0, 10]])
+        validate_planning_problem(lambda q: True, bounds,
+                                  np.array([1., 1.]), np.array([9., 9.]),
+                                  step_size=0.1, max_iter=100)
+
+    def test_validate_bad_bounds(self):
+        from src.robotics_learning.planning import validate_planning_problem
+        import pytest
+        bounds = np.array([[10, 0], [0, 10]])  # lower > upper
+        with pytest.raises(ValueError, match="下界"):
+            validate_planning_problem(lambda q: True, bounds,
+                                      np.array([1., 1.]), np.array([9., 9.]),
+                                      step_size=0.1, max_iter=100)
+
+    def test_validate_start_collision(self):
+        from src.robotics_learning.planning import validate_planning_problem
+        import pytest
+        bounds = np.array([[0, 10], [0, 10]])
+        with pytest.raises(ValueError, match="collision"):
+            validate_planning_problem(lambda q: q[0] < 5, bounds,
+                                      np.array([7., 5.]), np.array([3., 5.]),
+                                      step_size=0.1, max_iter=100)
+
+    def test_rrt_star_invalid_input(self):
+        """RRT* 无效输入应抛出"""
+        from src.robotics_learning.planning import rrt_star_plan
+        import pytest
+        bounds = np.array([[0, 10], [0, 10]])
+        with pytest.raises(ValueError, match="collision"):
+            rrt_star_plan(lambda q: False, bounds, np.array([1., 1.]), np.array([9., 9.]),
+                          max_iter=100, step_size=0.3, rng=RNG)

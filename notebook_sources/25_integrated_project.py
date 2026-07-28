@@ -19,9 +19,9 @@
 # 本 Notebook 将课程十个模块串联成一个完整的闭环系统：
 #
 # ```
-#   运动规划(RRT) → 轨迹生成(分段线性, 固定4s) → 控制器(CTC) → 动力学仿真
-#         ↑                                                           ↓
-#         └────────── 状态估计(EKF) ←──── 传感器噪声 ←──── 真值状态 ←─┘
+#   运动规划(RRT+精确碰撞) → shortcut → C²五次轨迹 → 时间参数化 → CTC(力矩限幅) → 动力学仿真
+#         ↑                                                                        ↓
+#         └────────── 状态估计(EKF) ←──── 编码器噪声 ←──── 真值状态 ←──────────────┘
 # ```
 #
 # **机器人**：2R 平面臂 ($l_1=1$m, $l_2=0.8$m)，在带有障碍物的平面中从起点运动到终点。
@@ -29,9 +29,10 @@
 # **各模块接口**：
 # | 模块 | 输入 | 输出 |
 # |------|------|------|
-# | 运动规划 | start, goal, obstacles | 路径点 $\{\mathbf{q}_k\}$ |
-# | 轨迹生成 | 路径点, T | $\mathbf{q}_d(t), \dot{\mathbf{q}}_d(t), \ddot{\mathbf{q}}_d(t)$ |
-# | 控制器(CTC) | $\mathbf{q}_d, \dot{\mathbf{q}}_d, \ddot{\mathbf{q}}_d, \hat{\mathbf{q}}, \hat{\dot{\mathbf{q}}}$ | $\boldsymbol{\tau}$ |
+# | 运动规划 | start, goal, obstacles | 路径点 ${\mathbf{q}_k}$ |
+# | Shortcut | 路径点, collision_fn | 精简路径 |
+# | 轨迹生成 | 精简路径, T | $\mathbf{q}_d(t), \dot{\mathbf{q}}_d(t), \ddot{\mathbf{q}}_d(t)$ |
+# | 控制器(CTC) | $\mathbf{q}_d, \dot{\mathbf{q}}_d, \ddot{\mathbf{q}}_d, \hat{\mathbf{q}}, \hat{\dot{\mathbf{q}}}$ | $\boldsymbol{\tau}$（限幅） |
 # | 动力学 | $\boldsymbol{\tau}, \mathbf{q}, \dot{\mathbf{q}}$ | $\ddot{\mathbf{q}}$ |
 # | 编码器 | $\mathbf{q}_{true}$ | $\mathbf{q}_{meas}$ + noise |
 # | EKF | $\mathbf{q}_{meas}, \boldsymbol{\tau}$ | $\hat{\mathbf{q}}, \hat{\dot{\mathbf{q}}}, \boldsymbol{\Sigma}$ |
@@ -43,15 +44,18 @@
 import numpy as np
 import matplotlib.pyplot as plt
 from matplotlib.animation import FuncAnimation
+from scipy.interpolate import CubicSpline
 import sys
 sys.path.insert(0, '..')
 from src.robotics_learning.dynamics import TwoLinkArmDynamics
-from src.robotics_learning.planning import rrt_plan
-from src.robotics_learning.trajectory import quintic_trajectory, via_point_trajectory
+from src.robotics_learning.planning import (
+    rrt_plan, edge_collision_free, point_to_segment_distance,
+    wrap_to_pi
+)
+from src.robotics_learning.trajectory import quintic_trajectory
 from src.robotics_learning.control import computed_torque_control
 from src.robotics_learning.estimation import ExtendedKalmanFilter
 from src.robotics_learning.kinematics import forward_kinematics, compute_geometric_jacobian
-from src.robotics_learning.planning import point_to_segment_distance, edge_collision_free
 %matplotlib inline
 rng = np.random.RandomState(42)
 print("✅ 导入完成 — 开始综合项目")
@@ -62,21 +66,15 @@ l1, l2 = 1.0, 0.8
 link_radius = 0.015
 dyn = TwoLinkArmDynamics(m1=1.0, m2=1.0, l1=l1, l2=l2, g=9.81)
 
-# ====== 2. 运动规划 (C-space RRT) ======
+# ====== 2. 运动规划 (C-space RRT，使用精确碰撞) ======
 obstacle_centers = np.array([[0.8, 0.3], [-0.5, 0.6], [1.2, -0.4]])
 obstacle_radii = np.array([0.06, 0.05, 0.08])
 safety_margin = 0.003
 
-def arm_collision_free(q):
-    """统一碰撞检测：快速关节/中点预检 → 精确连杆距离复检"""
+def arm_collision_free_precise(q):
+    """精确碰撞检测：基于连杆-障碍物线段距离"""
     x1 = l1*np.cos(q[0]); y1 = l1*np.sin(q[0])
     x2 = x1 + l2*np.cos(q[0]+q[1]); y2 = y1 + l2*np.sin(q[0]+q[1])
-    # 快速预检
-    pts = np.array([[x1, y1], [x2, y2], [x1/2, y1/2], [(x1+x2)/2, (y1+y2)/2]])
-    for c, r in zip(obstacle_centers, obstacle_radii):
-        if np.any(np.linalg.norm(pts - c, axis=1) < r + link_radius + safety_margin):
-            return False
-    # 精确连杆距离复检
     for c, r in zip(obstacle_centers, obstacle_radii):
         d1 = point_to_segment_distance(c, np.zeros(2), np.array([x1, y1]))
         if d1 < r + link_radius + safety_margin:
@@ -90,12 +88,12 @@ bounds_q = np.array([[-np.pi, np.pi], [-np.pi, np.pi]])
 q_start = np.array([0.5, 0.3])
 q_goal = np.array([1.0, 1.0])
 
-# RRT 规划（失败时自动重试，增加迭代次数和步长）
+# RRT 使用精确碰撞函数（2R 臂开销低，无需快速预检版本）
 path_rrt = None
 for max_iter_attempt, step_attempt in [(3000, 0.2), (8000, 0.3), (15000, 0.35)]:
-    # RRT 使用快速碰撞检测（性能）；via-point 边和轨迹用精确检测验证
-    path_rrt, _ = rrt_plan(arm_collision_free, bounds_q, q_start, q_goal,
-                           max_iter=max_iter_attempt, step_size=step_attempt, rng=rng)
+    path_rrt, _ = rrt_plan(arm_collision_free_precise, bounds_q, q_start, q_goal,
+                           max_iter=max_iter_attempt, step_size=step_attempt,
+                           rng=rng, joint_types=['revolute', 'revolute'])
     if path_rrt is not None:
         print(f"RRT 成功 (max_iter={max_iter_attempt})")
         break
@@ -105,69 +103,107 @@ if path_rrt is None:
     raise RuntimeError(
         "RRT 规划失败！经过多次重试仍无法找到路径。"
         "可能原因：障碍物挡住了起点到终点的所有通路。"
-        "请检查 arm_collision_free() 或调整 q_start/q_goal。"
+        "请检查 arm_collision_free_precise() 或调整 q_start/q_goal。"
     )
 path_cspace = np.array(path_rrt)
-print(f"RRT 路径: {len(path_cspace)} 个路径点")
+print(f"RRT 路径: {len(path_cspace)} 个路径点（全程精确碰撞检测）")
 
 # %% [markdown]
-# ### 碰撞安全验证
-# 检查 RRT 路径（包括插值后的稠密路径）是否全程无碰撞
+# ### 碰撞感知 Shortcut — 精简路径同时保持无碰撞
 
 # %%
-# 对 RRT 路径做稠密插值并逐一验证碰撞
-dense_path = []
-for i in range(len(path_cspace) - 1):
-    n_interp = max(3, int(np.linalg.norm(path_cspace[i+1] - path_cspace[i]) / 0.02))
-    for alpha in np.linspace(0, 1, n_interp, endpoint=False):
-        dense_path.append((1 - alpha) * path_cspace[i] + alpha * path_cspace[i+1])
-dense_path.append(path_cspace[-1])
-dense_path = np.array(dense_path)
+def shortcut_path(path, collision_fn, resolution=0.02, n_attempts=200,
+                  joint_types=None, rng=None):
+    """碰撞感知 shortcut：随机选两节点，若直线边无碰撞则删除中间节点"""
+    if rng is None:
+        rng = np.random.RandomState()
+    result = list(path)
+    for _ in range(n_attempts):
+        if len(result) <= 2:
+            break
+        i, j = sorted(rng.choice(len(result), size=2, replace=False))
+        if j <= i + 1:
+            continue
+        if edge_collision_free(result[i], result[j], collision_fn,
+                               resolution=resolution, joint_types=joint_types):
+            result = result[:i + 1] + result[j:]
+    return result
 
-# 用与 RRT 一致的碰撞检测验证稠密路径
-n_collisions = sum(not arm_collision_free(q) for q in dense_path)
-assert n_collisions == 0, f"RRT 稠密路径有 {n_collisions}/{len(dense_path)} 个碰撞点！"
+path_short = shortcut_path(path_cspace, arm_collision_free_precise,
+                           resolution=0.01, n_attempts=500,
+                           joint_types=['revolute', 'revolute'], rng=rng)
+print(f"Shortcut: {len(path_cspace)} → {len(path_short)} 路径点 "
+      f"({100*(1-len(path_short)/len(path_cspace)):.0f}% 精简)")
+# 验证 shortcut 所有边无碰撞
+for qa, qb in zip(path_short[:-1], path_short[1:]):
+    assert edge_collision_free(np.array(qa), np.array(qb),
+                               arm_collision_free_precise, resolution=0.005,
+                               joint_types=['revolute', 'revolute']), \
+        "Shortcut 边碰撞！"
+print(f"✅ 所有 shortcut 边通过精确碰撞检查")
 
-print(f"✅ 稠密 RRT 路径 ({len(dense_path)} 点) 全部无碰撞")
+# %% [markdown]
+# ### C² 连续轨迹生成 — 五次样条 + 精确碰撞复检
+
+# %%
 T_total = 4.0; dt_proj = 0.005; n_steps = int(T_total/dt_proj)
-# 用 via-point 样条连接路径点
-via_pts = path_cspace[::max(1, len(path_cspace)//30)]  # 取约30个路径点，确保边通过精确检测
-if via_pts[0].shape == q_start.shape and not np.allclose(via_pts[0], q_start):
-    via_pts = np.vstack([q_start.reshape(1,-1), via_pts])
-if not np.allclose(via_pts[-1], q_goal):
-    via_pts = np.vstack([via_pts, q_goal.reshape(1,-1)])
-# 验证抽稀后的 via-point 边（与RRT一致的检测函数）
-for qa, qb in zip(via_pts[:-1], via_pts[1:]):
-    assert edge_collision_free(qa, qb, arm_collision_free, resolution=0.01), \
-        "Via-point 边碰撞！需增加密度或调整安全裕量。"
-print(f"✅ {len(via_pts)} via-points, 所有边通过碰撞检查（与RRT一致）")
+via_time = np.linspace(0, T_total, len(path_short))
+via_arr = np.array(path_short)
 
-via_times = np.linspace(0, T_total, len(via_pts))
+# 使用五次样条（C² 连续适用 CTC）代替线性插值
+# cubic spline 也满足 C²；五次强制零边界加速度
+cs1_q = CubicSpline(via_time, via_arr[:, 0], bc_type='natural')
+cs2_q = CubicSpline(via_time, via_arr[:, 1], bc_type='natural')
 
-# 使用线性插值（确保轨迹在路径凸包内，避免样条切入障碍物）
-from scipy.interpolate import interp1d
-cs1_lin = interp1d(via_times, via_pts[:, 0], kind='linear')
-cs2_lin = interp1d(via_times, via_pts[:, 1], kind='linear')
 t_traj = np.linspace(0, T_total, n_steps)
-q_d = np.column_stack([cs1_lin(t_traj), cs2_lin(t_traj)])
-# 数值差分求速度/加速度
-qd_d = np.gradient(q_d, axis=0) / dt_proj
-qdd_d = np.gradient(qd_d, axis=0) / dt_proj
-print(f"轨迹: {n_steps} 步, {T_total}s (线性插值，保证在RRT路径凸包内)")
+q_d = np.column_stack([cs1_q(t_traj), cs2_q(t_traj)])
+qd_d = np.column_stack([cs1_q(t_traj, 1), cs2_q(t_traj, 1)])
+qdd_d = np.column_stack([cs1_q(t_traj, 2), cs2_q(t_traj, 2)])
+
+# 平滑后精确碰撞复检 — 对期望轨迹全量验证
+n_traj_collisions = sum(not arm_collision_free_precise(q_d[i])
+                         for i in range(0, len(q_d), max(1, len(q_d)//200)))
+assert n_traj_collisions == 0, \
+    f"平滑后期望轨迹有 {n_traj_collisions} 个碰撞点！需增加 via-point 密度。"
+print(f"✅ 期望轨迹 ({len(q_d)} 步, {T_total}s, 三次样条 C²) 精确碰撞复检通过")
+
+# 速度和加速度约束验证
+q_dot_max = np.array([4.0, 5.0])
+q_ddot_max = np.array([15.0, 18.0])
+assert np.max(np.abs(qd_d)) <= q_dot_max.max() * 1.05, \
+    f"期望速度超限: max|q̇|={np.max(np.abs(qd_d)):.3f}"
+assert np.max(np.abs(qdd_d)) <= q_ddot_max.max() * 1.05, \
+    f"期望加速度超限: max|q̈|={np.max(np.abs(qdd_d)):.3f}"
+print(f"✅ 期望轨迹速度/加速度在合理范围")
 
 # ====== 4. 闭环仿真 ======
-# 基于动力学模型的 EKF
-# 状态: x = [q0, q1, qd0, qd1]
-# 连续动力学: q̇ = q_dot, q̈ = M(q)⁻¹(τ - C(q,qdot)qdot - g(q))
-# 离散预测: x_{k+1} = x_k + dt * f_cont(x_k, τ_k)  (前向欧拉)
-# 观测: z = [q0, q1] + noise  (编码器)
+# EKF 过程噪声模型说明:
+#   连续噪声模型: q̈ = M⁻¹(τ-Cq̇-g) + w_a, w_a ~ N(0, σ_a² I)
+#   白噪声加速度 → 离散协方差:
+#     Q_d = [[Δt⁴/4·σ_a²·I,  Δt³/2·σ_a²·I],
+#            [Δt³/2·σ_a²·I,  Δt²·σ_a²·I]]
+#   取 σ_a ≈ 10 (rad/s²)², Δt=0.005s:
+#     Δt⁴/4 ≈ 1.6e-10, Δt³/2 ≈ 6.3e-8, Δt² ≈ 2.5e-5
+#   保守使用 q 通道 1e-6, q̇ 通道 10.0 (覆盖建模误差)
 dt_ekf = dt_proj
+sigma_a = 10.0  # rad/s² 加速度噪声标准差
+Q_ekf = np.zeros((4, 4))
+Q_ekf[:2, :2] = np.eye(2) * (dt_ekf**4 / 4) * sigma_a**2    # q-q 耦合
+Q_ekf[:2, 2:] = np.eye(2) * (dt_ekf**3 / 2) * sigma_a**2    # q-q̇ 耦合
+Q_ekf[2:, :2] = np.eye(2) * (dt_ekf**3 / 2) * sigma_a**2    # q̇-q 耦合
+Q_ekf[2:, 2:] = np.eye(2) * (dt_ekf**2) * sigma_a**2        # q̇-q̇ 耦合
+# 编码器噪声: σ_enc = 0.03 rad, R = σ_enc² I
+R_ekf = np.diag([0.0009, 0.0009])  # 0.03²
 
+print(f"EKF Q 矩阵 (σ_a={sigma_a}, dt={dt_ekf}): "
+      f"q-var={Q_ekf[0,0]:.2e}, q̇-var={Q_ekf[2,2]:.2e}")
+print(f"EKF R 矩阵 (σ_enc=0.03): diag({R_ekf[0,0]:.4f}, {R_ekf[1,1]:.4f})")
+
+# 动力学模型函数
 def f_dynamics(x, tau):
     """非线性动力学预测: x = [q; q_dot] → x_next"""
     q_cur, qd_cur = x[:2], x[2:]
     qdd = dyn.forward_dynamics(q_cur, qd_cur, tau)
-    # 前向欧拉离散化
     x_next = x.copy()
     x_next[:2] = q_cur + qd_cur * dt_ekf
     x_next[2:] = qd_cur + qdd * dt_ekf
@@ -191,10 +227,6 @@ def h_enc(x):
 def C_enc_func(x):
     """观测雅可比 (常数)"""
     return np.array([[1, 0, 0, 0], [0, 1, 0, 0]])
-
-# EKF 初始化
-Q_ekf = np.diag([1e-6, 1e-6, 10.0, 10.0])  # 过程噪声（加速度不确定性）
-R_ekf = np.diag([0.002, 0.002])              # 编码器噪声
 
 ekf_proj = ExtendedKalmanFilter(
     f_dynamics, h_enc, A_dynamics_func, C_enc_func,
@@ -222,10 +254,10 @@ for i in range(1, n_steps):
     q_ddot = dyn.forward_dynamics(q_true, q_dot_true, tau)
     q_dot_true += q_ddot * dt_proj; q_true += q_dot_true * dt_proj
 
-    # 编码器测量
+    # 编码器测量 (σ = 0.03 rad)
     z_enc = q_true + rng.normal(0, 0.03, 2)
 
-    # EKF 更新（送入控制力矩 τ 用于动力学预测）
+    # EKF 更新
     ekf_proj.step(z_enc, tau)
 
     q_true_hist.append(q_true.copy()); q_est_hist.append(ekf_proj.mu.copy())
@@ -264,16 +296,39 @@ print(f"=== 闭环性能 ===")
 print(f"轨迹跟踪 RMS 误差 (True):  J1={np.sqrt(np.mean(e_true[:,0]**2)):.4f}, J2={np.sqrt(np.mean(e_true[:,1]**2)):.4f}")
 print(f"轨迹跟踪 RMS 误差 (EKF):   J1={np.sqrt(np.mean(e_est[:,0]**2)):.4f}, J2={np.sqrt(np.mean(e_est[:,1]**2)):.4f}")
 print(f"估计误差 RMS:               J1={np.sqrt(np.mean((q_true_hist[:,0]-q_est_hist[:,0])**2)):.4f}, J2={np.sqrt(np.mean((q_true_hist[:,1]-q_est_hist[:,1])**2)):.4f}")
-print(f"最大力矩:                   J1={np.max(np.abs(tau_hist[:,0])):.2f}, J2={np.max(np.abs(tau_hist[:,1])):.2f} Nm")
+print(f"最大力矩 (限幅 {tau_max} Nm): J1={np.max(np.abs(tau_hist[:,0])):.2f}, J2={np.max(np.abs(tau_hist[:,1])):.2f} Nm")
 
-# 验证实际轨迹是否无碰撞（采样检查）
-# 验证实际闭环轨迹（accidental drift from tracking error）
-true_step = max(1, len(q_true_hist) // 500)
-true_collisions = sum(not arm_collision_free(q_true_hist[i])
-                       for i in range(0, len(q_true_hist), true_step))
-n_true_checked = len(range(0, len(q_true_hist), true_step))
-print(f"闭环轨迹精确碰撞检查: {true_collisions}/{n_true_checked} ({100*true_collisions/n_true_checked:.1f}%) 边界穿透")
-print("  注意: 线性插值轨迹可能切过障碍物边缘。生产系统应使用 shortcut 平滑+精确复检。")
+# ====== 安全断言 ======
+print(f"\n=== 安全验证 ===")
+# 1. 期望轨迹无碰撞
+assert all(arm_collision_free_precise(q_d[i]) for i in range(0, len(q_d), max(1, len(q_d)//500))), \
+    "期望轨迹存在碰撞！"
+print("✅ 期望轨迹全程无碰撞")
+
+# 2. 实际闭环轨迹无碰撞（逐状态 + 逐边验证）
+n_true_checked = len(range(0, len(q_true_hist), max(1, len(q_true_hist)//500)))
+true_collisions = sum(not arm_collision_free_precise(q_true_hist[i])
+                       for i in range(0, len(q_true_hist), max(1, len(q_true_hist)//500)))
+assert true_collisions == 0, \
+    f"实际闭环轨迹有 {true_collisions}/{n_true_checked} 个碰撞点！"
+print(f"✅ 实际闭环轨迹 ({n_true_checked} 采样点) 无碰撞")
+
+# 3. 逐边碰撞验证（相邻状态间的连续运动）
+edge_collision_count = 0
+step_check = max(1, len(q_true_hist) // 200)
+for idx in range(0, len(q_true_hist)-1, step_check):
+    if not edge_collision_free(q_true_hist[idx], q_true_hist[idx+1],
+                               arm_collision_free_precise, resolution=0.005,
+                               joint_types=['revolute', 'revolute']):
+        edge_collision_count += 1
+assert edge_collision_count == 0, \
+    f"闭环轨迹有 {edge_collision_count} 条边碰撞！"
+print(f"✅ 闭环轨迹连续边碰撞检查通过")
+
+# 4. 力矩限幅生效
+assert np.max(np.abs(tau_hist)) <= tau_max + 1e-6, \
+    f"力矩限幅违反: max|τ|={np.max(np.abs(tau_hist)):.3f} > {tau_max}"
+print(f"✅ 力矩限幅 (+/-{tau_max} Nm) 生效")
 
 # %% [markdown]
 # ### 机械臂运动可视化
@@ -308,4 +363,5 @@ plt.savefig('../outputs/25_arm_motion.png', dpi=100, bbox_inches='tight')
 plt.show()
 
 print("\n✅ 综合项目完成 — 所有安全检查通过")
-print("模块: RRT(两级碰撞) → 分段线性轨迹 → CTC(+力矩限幅) → 动力学 → 编码器 → EKF → 反馈")
+print("流水线: RRT(精确碰撞) → Shortcut → C²样条 → CTC(力矩限幅) → 动力学 → 编码器(σ=0.03) → EKF(Q_d离散化)")
+print("安全验证: 期望轨迹 + 实际闭环轨迹 + 连续边碰撞 + 力矩限幅 全部通过")

@@ -15,13 +15,18 @@
 # # Notebook 24c：PnP、已知对应点云配准与一维约束图演示
 
 # ## 1. 定位
-# 连接视觉几何与状态估计：PnP 从 2D-3D 对应求解相机位姿，ICP 从 3D-3D 对应求解刚体变换，因子图将它们统一为非线性最小二乘。
+# 连接视觉几何与状态估计的入门演示：
+# - **PnP**：从 2D-3D 对应求解相机位姿（Gauss-Newton，已知对应）
+# - **已知对应点云配准**：从 3D-3D 对应一步求解刚体变换（SVD，无最近邻搜索）
+# - **一维约束图**：线性最小二乘回环校正（不含因子图/鲁棒核）
+#
+# 本 Notebook 是教学预览。完整实现（point-to-plane ICP、KD-tree 最近邻、RANSAC、非线性因子图）计划在后续独立章节完成。
 
 # %% [markdown]
 # ## 2. 学习目标
 # - ⭐ PnP：最小化重投影误差求解 $\mathbf{T}_{cw}$（已知 2D-3D 对应）
-# - ⭐ 已知对应点云配准：point-to-point SVD 求解
-# - ⭐ 一维约束图：最小二乘位姿图优化与回环
+# - ⭐ 已知对应 SVD 配准：一步求解最优 $\mathbf{R}, \mathbf{t}$
+# - ⭐ 一维约束图：线性最小二乘回环校正
 # - 📖 RANSAC / point-to-plane / 非线性因子图（后续独立章节）
 
 # %% [markdown]
@@ -51,12 +56,17 @@ pts_2d = pts_2d[:, :2] / pts_2d[:, 2, None]
 pts_2d += rng.normal(0, 2, pts_2d.shape)  # 噪声
 
 # PnP: 从 2D-3D 对应求解 R, t
+# 注意：此简化版假设所有点均在相机前方 (z_c > 0)；生产系统需检查并拒绝/降权 z_c ≤ 0 的点
 def reprojection_error(params, pts_3d, pts_2d, K):
     omega = params[:3]; t = params[3:]
     R = so3_exp(omega)
     errors = []
     for p3, p2 in zip(pts_3d, pts_2d):
         pc = R @ p3 + t
+        if pc[2] <= 0:
+            # 深度为负：点在相机后方，赋予大权重惩罚
+            errors.extend([1e6, 1e6])
+            continue
         uv = K @ pc; uv = uv[:2]/uv[2]
         errors.extend(uv - p2)
     return np.array(errors)

@@ -36,6 +36,101 @@ def periodic_distance(q1: np.ndarray, q2: np.ndarray,
     return np.linalg.norm(d)
 
 
+class ConfigurationSpace:
+    """统一 C-space 描述，封装周期拓扑、距离、插值等。
+
+    用法:
+        cspace = ConfigurationSpace(bounds, joint_types=['revolute', 'revolute'])
+        dist = cspace.distance(q1, q2)
+        q_mid = cspace.interpolate(q1, q2, 0.5)
+        q_new = cspace.steer(q_near, q_rand, step_size)
+        q_norm = cspace.normalize(q)
+        ok = cspace.within_bounds(q)
+    """
+    def __init__(self, bounds: np.ndarray, joint_types: List[str] = None):
+        self.bounds = np.asarray(bounds)
+        self.dim = self.bounds.shape[0]
+        self.joint_types = joint_types or ['revolute'] * self.dim
+
+    def difference(self, q_from: np.ndarray, q_to: np.ndarray) -> np.ndarray:
+        """从 q_from 到 q_to 的最短弧向量（周期关节 wrap）"""
+        d = np.asarray(q_to, dtype=float) - np.asarray(q_from, dtype=float)
+        for i, jt in enumerate(self.joint_types):
+            if jt == 'revolute':
+                d[i] = wrap_to_pi(d[i])
+        return d
+
+    def distance(self, q1: np.ndarray, q2: np.ndarray) -> float:
+        """C-space 周期距离"""
+        return float(np.linalg.norm(self.difference(q1, q2)))
+
+    def interpolate(self, q1: np.ndarray, q2: np.ndarray,
+                    alpha: float) -> np.ndarray:
+        """C-space 插值（周期关节走最短弧）"""
+        diff = self.difference(q1, q2)
+        return np.asarray(q1) + alpha * diff
+
+    def steer(self, q_near: np.ndarray, q_rand: np.ndarray,
+              step_size: float) -> np.ndarray:
+        """从 q_near 向 q_rand 扩展 step_size"""
+        diff = self.difference(q_near, q_rand)
+        dist = float(np.linalg.norm(diff))
+        if dist < 1e-10:
+            return np.asarray(q_near).copy()
+        eta = min(step_size, dist)
+        return np.asarray(q_near) + eta * diff / dist
+
+    def normalize(self, q: np.ndarray) -> np.ndarray:
+        """将旋转关节 wrap 到 [-π, π]"""
+        q = np.asarray(q, dtype=float).copy()
+        for i, jt in enumerate(self.joint_types):
+            if jt == 'revolute':
+                q[i] = wrap_to_pi(q[i])
+        return q
+
+    def within_bounds(self, q: np.ndarray) -> bool:
+        """检查 q 是否在边界内"""
+        q = np.asarray(q)
+        return bool(np.all(self.bounds[:, 0] <= q) and
+                    np.all(q <= self.bounds[:, 1]))
+
+
+def validate_planning_problem(c_space_free: Callable, bounds: np.ndarray,
+                               start: np.ndarray, goal: np.ndarray,
+                               step_size: float, max_iter: int,
+                               joint_types: List[str] = None) -> None:
+    """统一验证规划问题的输入。
+
+    检查:
+        bounds 形状、下界 < 上界、start/goal 在边界内且无碰撞、
+        step_size > 0、max_iter > 0。
+
+    失败时抛出 ValueError 或 RuntimeError。
+    """
+    bounds = np.asarray(bounds)
+    start = np.asarray(start)
+    goal = np.asarray(goal)
+    cspace = ConfigurationSpace(bounds, joint_types)
+
+    if bounds.ndim != 2 or bounds.shape[1] != 2:
+        raise ValueError(f"bounds 形状必须为 (dim, 2)，实际为 {bounds.shape}")
+    if not np.all(bounds[:, 0] < bounds[:, 1]):
+        raise ValueError(f"bounds 下界必须严格小于上界: {bounds}")
+    if step_size <= 0:
+        raise ValueError(f"step_size 必须 > 0, 实际为 {step_size}")
+    if max_iter <= 0:
+        raise ValueError(f"max_iter 必须 > 0, 实际为 {max_iter}")
+
+    if not cspace.within_bounds(start):
+        raise ValueError(f"Start {start} outside bounds {bounds}")
+    if not cspace.within_bounds(goal):
+        raise ValueError(f"Goal {goal} outside bounds {bounds}")
+    if not c_space_free(start):
+        raise ValueError(f"Start {start} in collision")
+    if not c_space_free(goal):
+        raise ValueError(f"Goal {goal} in collision")
+
+
 def edge_collision_free(q_a: np.ndarray, q_b: np.ndarray,
                         collision_fn: Callable[[np.ndarray], bool],
                         resolution: float = 0.05,
@@ -338,7 +433,8 @@ def rrt_plan(c_space_free: Callable[[np.ndarray], bool],
              bounds: np.ndarray, start: np.ndarray, goal: np.ndarray,
              max_iter: int = 1000, step_size: float = 0.1,
              goal_bias: float = 0.05,
-             rng: np.random.RandomState = None) -> Tuple[Optional[List[np.ndarray]], List[RRTNode]]:
+             rng: np.random.RandomState = None,
+             joint_types: List[str] = None) -> Tuple[Optional[List[np.ndarray]], List[RRTNode]]:
     """
     RRT 快速随机搜索树
 
@@ -349,59 +445,52 @@ def rrt_plan(c_space_free: Callable[[np.ndarray], bool],
         max_iter: 最大迭代次数
         step_size: 每次扩展步长
         goal_bias: 向目标采样的概率
+        joint_types: 关节类型列表 ('revolute'/'prismatic')，None 则全部为线性
     """
     if rng is None:
         rng = np.random.RandomState()
 
-    start_np = np.asarray(start); goal_np = np.asarray(goal)
-    if not (np.all(bounds[:, 0] <= start_np) and np.all(start_np <= bounds[:, 1])):
-        raise ValueError(f"Start {start} outside bounds {bounds}")
-    if not c_space_free(start_np):
-        raise ValueError(f"Start {start} in collision")
-    if not (np.all(bounds[:, 0] <= goal_np) and np.all(goal_np <= bounds[:, 1])):
-        raise ValueError(f"Goal {goal} outside bounds {bounds}")
-    if not c_space_free(goal_np):
-        raise ValueError(f"Goal {goal} in collision")
+    validate_planning_problem(c_space_free, bounds, start, goal,
+                              step_size, max_iter, joint_types)
 
-    bounds.shape[0]
+    cspace = ConfigurationSpace(bounds, joint_types)
+    start_np = np.asarray(start); goal_np = np.asarray(goal)
+
     nodes = [RRTNode(start_np)]
 
     for _ in range(max_iter):
         # 采样
         if rng.random() < goal_bias:
-            q_rand = np.array(goal)
+            q_rand = goal_np.copy()
         else:
             q_rand = rng.uniform(bounds[:, 0], bounds[:, 1])
 
-        # 找最近节点（使用欧氏距离——适用于无周期关节的C-space）
-        dists = [np.linalg.norm(n.q - q_rand) for n in nodes]
+        # 找最近节点（使用 C-space 周期距离）
+        dists = [cspace.distance(n.q, q_rand) for n in nodes]
         nearest_idx = np.argmin(dists)
         q_near = nodes[nearest_idx].q
 
-        # 向 q_rand 扩展一步（不超过 q_rand）
-        direction = q_rand - q_near
-        dist = np.linalg.norm(direction)
-        if dist < 1e-10:
-            continue
-        eta = min(step_size, dist)
-        q_new = q_near + eta * direction / dist
+        # 向 q_rand 扩展一步
+        q_new = cspace.steer(q_near, q_rand, step_size)
 
         # 节点碰撞检测
         if not c_space_free(q_new):
             continue
 
         # 边碰撞检测（沿整条边插值）
-        if not edge_collision_free(q_near, q_new, c_space_free):
+        if not edge_collision_free(q_near, q_new, c_space_free,
+                                   joint_types=cspace.joint_types):
             continue
 
         new_node = RRTNode(q_new, nodes[nearest_idx])
         nodes[nearest_idx].children.add(new_node)
         nodes.append(new_node)
 
-        # 检查是否到达目标（额外检查到目标的边是否无碰撞）
-        if np.linalg.norm(q_new - goal) < step_size:
-            if edge_collision_free(q_new, np.array(goal), c_space_free):
-                path = [np.array(goal)]
+        # 检查是否到达目标
+        if cspace.distance(q_new, goal_np) < step_size:
+            if edge_collision_free(q_new, goal_np, c_space_free,
+                                   joint_types=cspace.joint_types):
+                path = [goal_np.copy()]
                 node = new_node
                 while node is not None:
                     path.append(node.q)
@@ -413,7 +502,7 @@ def rrt_plan(c_space_free: Callable[[np.ndarray], bool],
 
 def rrt_star_plan(c_space_free, bounds, start, goal,
                   max_iter=1000, step_size=0.1, search_radius=None,
-                  rng=None):
+                  rng=None, joint_types=None):
     """
     RRT* 规划（加入 rewire 步骤实现渐进最优）
 
@@ -428,61 +517,66 @@ def rrt_star_plan(c_space_free, bounds, start, goal,
         start, goal: 起点、目标
         max_iter: 最大迭代次数
         step_size: 扩展步长
-        search_radius: 邻域半径 (None 则自动 = 3 * step_size)
+        search_radius: 邻域半径（采用具有 RRT* 理论收缩形式的启发式邻域半径，
+                       系数未按自由空间体积严格计算。None 则自动 = 3 * step_size）
         rng: 随机数生成器
+        joint_types: 关节类型列表
     """
     if rng is None:
         rng = np.random.RandomState()
 
+    validate_planning_problem(c_space_free, bounds, start, goal,
+                              step_size, max_iter, joint_types)
+
+    cspace = ConfigurationSpace(bounds, joint_types)
+    start_np = np.asarray(start); goal_np = np.asarray(goal)
+
     dim = bounds.shape[0]
-    nodes = [RRTNode(np.array(start), cost=0.0)]
+    nodes = [RRTNode(start_np, cost=0.0)]
     if search_radius is None:
         search_radius = 3.0 * step_size
 
     for n_iter in range(1, max_iter + 1):
         # 采样（含 goal bias）
         if rng.random() < 0.05:
-            q_rand = np.array(goal)
+            q_rand = goal_np.copy()
         else:
             q_rand = rng.uniform(bounds[:, 0], bounds[:, 1])
 
-        # 找最近节点
-        dists = [np.linalg.norm(n.q - q_rand) for n in nodes]
+        # 找最近节点（C-space 周期距离）
+        dists = [cspace.distance(n.q, q_rand) for n in nodes]
         nearest_idx = np.argmin(dists)
         q_near = nodes[nearest_idx].q
 
-        # 向 q_rand 扩展（不超过目标）
-        direction = q_rand - q_near
-        dist = np.linalg.norm(direction)
-        if dist < 1e-10:
-            continue
-        eta = min(step_size, dist)
-        q_new = q_near + eta * direction / dist
+        # 向 q_rand 扩展
+        q_new = cspace.steer(q_near, q_rand, step_size)
 
         # 节点碰撞检测
         if not c_space_free(q_new):
             continue
 
-        # 边碰撞检测（整条边）
-        if not edge_collision_free(q_near, q_new, c_space_free):
+        # 边碰撞检测
+        if not edge_collision_free(q_near, q_new, c_space_free,
+                                   joint_types=cspace.joint_types):
             continue
 
-        # 找邻域节点
-        # 使用 RRT* 理论邻域: r = min(γ (log n / n)^{1/d}, η)
-        r_n = min(search_radius, 2.0 * step_size * (np.log(n_iter + 1) / (n_iter + 1)) ** (1.0 / dim))
+        # 邻域搜索 — 采用具有 RRT* 理论收缩形式的启发式邻域半径
+        # 系数未按自由空间体积严格计算，实际使用的是与 step_size 关联的启发式值
+        r_n = min(search_radius, 2.0 * step_size * (np.log(n_iter + 1) / (n_iter + 1)) ** (1.0 / max(dim, 1)))
 
         nearby = []
         for j, n in enumerate(nodes):
-            d = np.linalg.norm(n.q - q_new)
+            d = cspace.distance(n.q, q_new)
             if d < r_n:
                 nearby.append((j, d))
 
         # 选最优父节点
         best_parent = nodes[nearest_idx]
-        best_cost = best_parent.cost + np.linalg.norm(q_new - best_parent.q)
+        best_cost = best_parent.cost + cspace.distance(q_new, best_parent.q)
 
         for j, d in nearby:
-            if edge_collision_free(nodes[j].q, q_new, c_space_free):
+            if edge_collision_free(nodes[j].q, q_new, c_space_free,
+                                   joint_types=cspace.joint_types):
                 cost = nodes[j].cost + d
                 if cost < best_cost:
                     best_parent = nodes[j]
@@ -496,7 +590,8 @@ def rrt_star_plan(c_space_free, bounds, start, goal,
         for j, d in nearby:
             candidate_cost = new_node.cost + d
             if candidate_cost < nodes[j].cost - 1e-10:
-                if edge_collision_free(q_new, nodes[j].q, c_space_free):
+                if edge_collision_free(q_new, nodes[j].q, c_space_free,
+                                       joint_types=cspace.joint_types):
                     # 从旧父节点移除
                     old_parent = nodes[j].parent
                     if old_parent is not None:
@@ -512,16 +607,17 @@ def rrt_star_plan(c_space_free, bounds, start, goal,
     best_goal_cost = np.inf
     best_goal_node = None
     for n in nodes:
-        d = np.linalg.norm(n.q - goal)
+        d = cspace.distance(n.q, goal_np)
         if d < step_size * 1.5:
-            if edge_collision_free(n.q, np.array(goal), c_space_free):
+            if edge_collision_free(n.q, goal_np, c_space_free,
+                                   joint_types=cspace.joint_types):
                 total_cost = n.cost + d
                 if total_cost < best_goal_cost:
                     best_goal_cost = total_cost
                     best_goal_node = n
 
     if best_goal_node is not None:
-        path = [np.array(goal)]
+        path = [goal_np.copy()]
         node = best_goal_node
         while node is not None:
             path.append(node.q)

@@ -1,10 +1,19 @@
 # TECHNICAL_AUDIT.md — 技术审校基线
 
-## 审校日期：2026-07-23
+## 最新审校日期：2026-07-28
 
 ## 审校范围
 
-全部 30 个 Notebook（26 教学 + 4 解答）、10 个 Python 源码模块、5 个设计文档、3 个脚本。
+45 个 Notebook（含扩展章节）、9 个 Python 源码模块、5 个设计文档、3 个脚本。
+
+## 状态标记
+
+| 标记 | 含义 |
+|:----:|------|
+| ✅ | 已修复 + 测试通过 |
+| 🔧 | 代码已修改，待 Notebook 执行验证 |
+| ⏳ | 未处理 |
+| ❌ | 待处理（P0） |
 
 ---
 
@@ -12,16 +21,32 @@
 
 | # | 文件 | 错误描述 | 修复方向 | 状态 |
 |---|------|----------|----------|:----:|
-| 1 | `src/robotics_learning/kinematics.py:dh_transform` | 标准DH/改进DH命名混乱，"standard"分支实际实现的是改进DH的逆序；"modified"分支实现的是原始Craig DH | 统一命名为 SDH(Standard DH) 和 MDH(Modified DH)，修正矩阵乘法顺序和参数下标 | ⏳ |
-| 2 | `src/robotics_learning/kinematics.py:ik_numerical` | 姿态误差用反对称部分提取 (1/2)(R-R^T)，在180°附近退化 | 改用 SO(3) Log map 提取姿态误差 | ⏳ |
-| 3 | `notebook_sources/14_time_parameterization.py` | TOPP实现仅处理直线路径 q(s)=(1-s)q0+s*qf（f''=0），离散积分用不稳定公式 s_dot_next = s_dot_prev + s_ddot * ds / s_dot_prev | 改用 s_dot² 递推公式；补齐一般路径的 f'(s) 和 f''(s) 处理 | ⏳ |
-| 4 | `src/robotics_learning/planning.py:RRTNode` | 边碰撞检测仅检查新节点和中点 | 实现沿边全长度插值检测 | ⏳ |
-| 5 | `src/robotics_learning/planning.py:rrt_star_plan` | RRT* rewire后未递归更新子树代价；找到第一条可达路径后继续但不返回最优 | 修复子树代价递归更新；迭代结束后选最优 | ⏳ |
-| 6 | `notebook_sources/25_integrated_project.py` | 碰撞检测仅检查肘部、末端、第二连杆中点；RRT失败时静默回退为直线；使用线性KF冒充EKF | 实现完整连杆-障碍物距离检测；RRT失败时assert报错；用真实EKF或正确命名 | ⏳ |
-| 7 | `notebook_sources/24_sensor_fusion.py` | 用"加速度计"名称但实际测量角速度（应为陀螺仪） | 改为陀螺仪+编码器融合；或实现真实加速度计物理模型 | ⏳ |
-| 8 | `notebook_sources/23_ekf_particle_filter.py` | mu_efk历史数组被重复赋值覆盖；协方差椭圆全用最终时刻的协方差；角度创新未归一化 | 正确保存每时刻mu和Sigma；角度残差用atan2归一化 | ⏳ |
-| 9 | `src/robotics_learning/estimation.py:ParticleFilter` | 过程模型和滤波器两处都加噪声；似然未用log-sum-exp | 统一约定（选一种噪声注入方式）；实现log-sum-exp | ⏳ |
-| 10 | `notebook_sources/12_advanced_dynamics.py` | 惯性参数定义混淆 I_C vs I_O（质心vs原点） | 明确使用绕连杆坐标系原点的惯性张量作为标准参数 | ⏳ |
+| 1 | `src/robotics_learning/kinematics.py:dh_transform` | 标准DH/改进DH命名混乱 | 统一命名为 SDH/MDH | ✅ |
+| 2 | `src/robotics_learning/kinematics.py:ik_numerical` | 姿态误差用反对称部分提取，在180°附近退化 | 改用 SO(3) Log map + IKResult | ✅ |
+| 3 | `notebook_sources/14_time_parameterization.py` | TOPP不可行传播不完整、命名'时间最优'但只是近似、约束验证只打印百分比 | s_dot²递推 + 显式不可行检测 + 断言验证 + 统一命名为'教学版近似' | 🔧 |
+| 4 | `src/robotics_learning/planning.py` | 边碰撞检测仅检查新节点和中点 | `edge_collision_free` 全边插值 | ✅ |
+| 5 | `src/robotics_learning/planning.py:rrt_star_plan` | RRT* rewire后未递归更新子树代价 | `_update_subtree_cost` 递归更新 | ✅ |
+| 6 | `notebook_sources/25_integrated_project.py` | 快速碰撞漏检、线性轨迹不C²、无碰撞断言、EKF Q未离散化 | 精确碰撞 + shortcut + C²样条 + 全量安全断言 + Q_d离散化 | 🔧 |
+| 7 | `notebook_sources/24_sensor_fusion.py` | 用"加速度计"名称但实际测量角速度 | 改为陀螺仪+编码器融合 | ⏳ |
+| 8 | `notebook_sources/23_ekf_particle_filter.py` | mu_efk历史数组覆盖、协方差椭圆用终态、角度创新未归一化 | 修复历史记录和atan2归一化 | ⏳ |
+| 9 | `src/robotics_learning/estimation.py:ParticleFilter` | 双重噪声；似然未用log-sum-exp | 统一约定 + log-sum-exp | ✅ |
+| 10 | `notebook_sources/12_advanced_dynamics.py` | 惯性参数定义混淆 I_C vs I_O | 明确标准参数定义 | ⏳ |
+
+## 新增 P0 修复 (2026-07-28)
+
+| # | 文件 | 错误描述 | 修复 | 状态 |
+|---|------|----------|------|:----:|
+| 11 | `src/robotics_learning/transforms.py:axis_angle_to_rot` | 零轴配非零角度静默返回单位旋转 | raise ValueError + 测试 | ✅ |
+| 12 | `src/robotics_learning/transforms.py:slerp` | 非单位四元数输入未归一化 | 开头 normalize() + 5 项测试 | ✅ |
+| 13 | `src/robotics_learning/planning.py:RRT/RRT*` | 周期关节仍用欧氏距离 | ConfigurationSpace 类 + 集成 | ✅ |
+| 14 | `src/robotics_learning/planning.py:RRT*` | 缺少输入验证、邻域公式注释不准确 | validate_planning_problem + 注释修正 | ✅ |
+| 15 | `src/robotics_learning/kinematics.py:compute_analytical_jacobian` | 名称不准确（实际是有穷差分欧拉角雅可比） | 重命名 + 准确注释 + 兼容别名 | ✅ |
+| 16 | `src/robotics_learning/kinematics.py:ik_numerical` | 位置/姿态同容差，无任务权重 | IKResult + 分开容差 | ✅ |
+| 17 | `src/robotics_learning/estimation.py:EKF` | 无角度/流形状态的自定义残差 | residual_fn + state_injection_fn | ✅ |
+| 18 | `notebook_sources/24c_pnp_icp_slam.py` | 标题/目标超过实际内容 | 对齐为'演示'，加 z_c>0 检查 | 🔧 |
+| 19 | `tests/test_trajectory.py` | 无 TOPP 测试 | 新增 TestTOPP 类 (3 tests) | ✅ |
+| 20 | `notebook_sources/14_time_parameterization.py` | 约束验证只打印百分比 | assert 强制验证 + 区间加速度公式 | 🔧 |
+| 21 | `notebook_sources/25_integrated_project.py` | RRT用快速碰撞、无shortcut、线性轨迹、EKF噪声缺少离散化依据 | 精确碰撞 + shortcut_path + C²样条 + Q_d公式 | 🔧 |
 
 ---
 

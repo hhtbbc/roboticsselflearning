@@ -9,7 +9,7 @@
 """
 
 import numpy as np
-from typing import List, Tuple, Optional
+from typing import List, Tuple
 from dataclasses import dataclass
 from .transforms import rot_x, rot_z
 
@@ -156,22 +156,27 @@ def ik_2r_geometric(l1: float, l2: float, x: float, y: float) -> List[Tuple[floa
 
 def ik_numerical(dh_table: np.ndarray, T_des: np.ndarray,
                  q_init: np.ndarray, max_iter: int = 100,
-                 tol: float = 1e-6, damping: float = 0.0) -> Optional[np.ndarray]:
+                 position_tol: float = 1e-4, orientation_tol: float = 1e-4,
+                 damping: float = 0.0,
+                 max_step: float = 0.5) -> IKResult:
     """
     数值法 IK（基于雅可比伪逆 / 阻尼最小二乘）
 
+    使用 SO(3) Log 提取姿态误差，对 180° 旋转也有效。
+
     参数:
-        dh_table: DH 参数表
+        dh_table: DH 参数表 (n,3) [a, alpha, d]
         T_des: 目标位姿 4×4
         q_init: 初始关节角
         max_iter: 最大迭代次数
-        tol: 收敛容差
+        position_tol: 位置容差 (m)
+        orientation_tol: 姿态容差 (rad)
         damping: 阻尼因子（>0 启用 DLS）
+        max_step: 最大单步关节增量 (rad)
     返回:
-        q: 解关节角，不收敛时返回 None
+        IKResult 包含解关节角、是否成功、迭代次数、误差和失败原因
     """
     q = q_init.copy()
-    len(q)
 
     for iteration in range(max_iter):
         # 计算当前 FK
@@ -179,23 +184,27 @@ def ik_numerical(dh_table: np.ndarray, T_des: np.ndarray,
             np.column_stack([dh_table[:, :3], q])
         )
 
-        # 位姿误差 — 使用 SO(3) Log 提取姿态误差（对 180° 也能工作）
+        # 位置误差 (m)
         p_err = T_des[:3, 3] - T_curr[:3, 3]
-        # 空间误差 (左误差): R_err = R_d * R_curr^T (在空间系中表达)
+        # 姿态误差 (rad) — SO(3) Log map
         R_err_mat = T_des[:3, :3] @ T_curr[:3, :3].T
-        # SO(3) Logarithm: 提取旋转向量
         from .transforms import so3_log
-        omega_err = so3_log(R_err_mat)  # 旋转向量 ∈ ℝ³
+        omega_err = so3_log(R_err_mat)
+
+        pos_err_norm = np.linalg.norm(p_err)
+        rot_err_norm = np.linalg.norm(omega_err)
+
+        if pos_err_norm < position_tol and rot_err_norm < orientation_tol:
+            return IKResult(q=q, success=True, iterations=iteration + 1,
+                           position_error=pos_err_norm,
+                           orientation_error=rot_err_norm,
+                           reason="Converged")
+
         error = np.concatenate([p_err, omega_err])
 
-        if np.linalg.norm(error) < tol:
-            return q
-
-        # 经典几何雅可比 (末端点速度 + 角速度)
+        # 经典几何雅可比
         J = compute_geometric_jacobian(dh_table, q)
 
-        # 更新关节角（加权阻尼最小二乘）
-        len(q)
         if damping > 0:
             # DLS: Δq = J^T (J J^T + λ² I)^{-1} e
             JJT = J @ J.T
@@ -206,14 +215,16 @@ def ik_numerical(dh_table: np.ndarray, T_des: np.ndarray,
             delta_q = J_pinv @ error
 
         # 最大单步关节增量限制
-        max_step = 0.5  # rad
         step_norm = np.max(np.abs(delta_q))
         if step_norm > max_step:
             delta_q = delta_q * max_step / step_norm
 
         q = q + delta_q
 
-    return None  # 不收敛
+    return IKResult(q=q, success=False, iterations=max_iter,
+                   position_error=np.linalg.norm(p_err),
+                   orientation_error=np.linalg.norm(omega_err),
+                   reason="Max iterations exceeded")
 
 
 # =============================================================================
@@ -260,17 +271,21 @@ def compute_geometric_jacobian(dh_table: np.ndarray, q: np.ndarray) -> np.ndarra
     return J
 
 
-def compute_analytical_jacobian(dh_table: np.ndarray, q: np.ndarray) -> np.ndarray:
+def compute_pose_parameter_jacobian_fd(dh_table: np.ndarray, q: np.ndarray) -> np.ndarray:
     """
-    解析雅可比（通过差分 FK 计算）
+    通过 FK 有限差分和欧拉角提取的姿态参数雅可比。
 
-    解析雅可比将关节速度映射到最小姿态表示的导数（如欧拉角速率）。
-    J_A 与几何雅可比的关系: J = B_A(φ) J_A，其中 B_A 是变换矩阵。
+    此函数将关节速度映射到最小姿态表示（ZYX 欧拉角）的导数。
+    注意这是有限差分近似，会受到欧拉角 ±π 跳变和万向锁影响。
+
+    如需解析形式: J_A = diag(I, E^{-1}(φ)) · J_G,
+    其中 E(φ) 将欧拉角速率映射到角速度 (ω = E(φ) φ̇)。
 
     参数:
-        dh_table, q: 同 compute_geometric_jacobian
+        dh_table: (n,3) DH 参数
+        q: (n,) 关节角
     返回:
-        J_A: 6×n 解析雅可比
+        J_A: 6×n 姿态参数雅可比 (有限差分)
     """
     n = len(q)
     eps = 1e-6
@@ -278,7 +293,6 @@ def compute_analytical_jacobian(dh_table: np.ndarray, q: np.ndarray) -> np.ndarr
     def fk_pose(dh_table, q):
         T, _ = forward_kinematics(np.column_stack([dh_table, q]))
         p = T[:3, 3]
-        # 用 ZYX 欧拉角作为最小表示
         from .transforms import rot_to_euler_zyx
         rpy = rot_to_euler_zyx(T[:3, :3])
         return np.concatenate([p, rpy])
@@ -293,6 +307,10 @@ def compute_analytical_jacobian(dh_table: np.ndarray, q: np.ndarray) -> np.ndarr
         J_A[:, i] = (fi - f0) / eps
 
     return J_A
+
+
+# 向后兼容别名
+compute_analytical_jacobian = compute_pose_parameter_jacobian_fd
 
 
 def compute_space_jacobian_poe(screw_axes: list, q: np.ndarray) -> np.ndarray:

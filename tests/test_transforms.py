@@ -128,6 +128,17 @@ class TestAxisAngle:
         R = axis_angle_to_rot(np.array([1, 0, 0]), 0.0)
         assert np.allclose(R, np.eye(3))
 
+    def test_zero_axis_zero_angle(self):
+        """零轴 + 零角度 → 单位旋转"""
+        R = axis_angle_to_rot(np.zeros(3), 0.0)
+        assert np.allclose(R, np.eye(3))
+
+    def test_zero_axis_nonzero_angle_raises(self):
+        """零轴 + 非零角度 → ValueError (未定义的旋转)"""
+        import pytest
+        with pytest.raises(ValueError, match="zero"):
+            axis_angle_to_rot(np.zeros(3), np.pi / 2)
+
     def test_180_degree(self):
         """180° 旋转的特殊处理"""
         axis = np.array([0.0, 0.0, 1.0])
@@ -164,6 +175,37 @@ class TestQuaternion:
         q1_res = slerp(q1, q2, 1.0)
         assert np.allclose(q0.to_rot(), q1.to_rot(), atol=1e-8)
         assert np.allclose(q1_res.to_rot(), q2.to_rot(), atol=1e-8)
+
+    def test_slerp_non_unit_input(self):
+        """非单位四元数输入应自动归一化"""
+        q1 = Quaternion(2.0, 0, 0, 0)  # 2 * identity
+        q2 = Quaternion.from_axis_angle(np.array([0, 0, 1]), np.pi/3)
+        q_mid = slerp(q1, q2, 0.5)
+        # 应返回单位四元数
+        n = np.sqrt(q_mid.w**2 + q_mid.x**2 + q_mid.y**2 + q_mid.z**2)
+        assert abs(n - 1.0) < 1e-10
+
+    def test_slerp_q_and_minus_q(self):
+        """q 和 -q 代表同一旋转，slerp 中间值应一致"""
+        q1 = Quaternion.from_axis_angle(np.array([0, 0, 1]), 0.0)
+        q2 = Quaternion.from_axis_angle(np.array([0, 0, 1]), np.pi/3)
+        q2_neg = Quaternion(-q2.w, -q2.x, -q2.y, -q2.z)
+        q_mid = slerp(q1, q2, 0.5)
+        q_mid_neg = slerp(q1, q2_neg, 0.5)
+        assert np.allclose(q_mid.to_rot(), q_mid_neg.to_rot(), atol=1e-8)
+
+    def test_slerp_near_zero_rotation(self):
+        """极小的旋转差 → 线性近似应正确"""
+        q1 = Quaternion.from_axis_angle(np.array([1, 0, 0]), 0.0)
+        q2 = Quaternion.from_axis_angle(np.array([1, 0, 0]), 1e-6)
+        q_mid = slerp(q1, q2, 0.5)
+        assert q_mid.is_unit()
+
+    def test_from_axis_angle_zero_axis_nonzero_angle(self):
+        """零轴 + 非零角度 → ValueError"""
+        import pytest
+        with pytest.raises(ValueError, match="zero"):
+            Quaternion.from_axis_angle(np.zeros(3), 0.5)
 
 
 class TestLieGroup:
