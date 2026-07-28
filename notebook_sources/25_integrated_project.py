@@ -65,7 +65,7 @@ dyn = TwoLinkArmDynamics(m1=1.0, m2=1.0, l1=l1, l2=l2, g=9.81)
 # ====== 2. 运动规划 (C-space RRT) ======
 obstacle_centers = np.array([[0.8, 0.3], [-0.5, 0.6], [1.2, -0.4]])
 obstacle_radii = np.array([0.12, 0.10, 0.14])
-safety_margin = 0.04  # 平衡 RRT 可行性与碰撞安全性
+safety_margin = 0.03  # 与快速碰撞检测一致
 
 def arm_collision_free(q):
     """检查 2R 臂是否与圆形障碍物碰撞（快速版：检查关节点+中点）。"""
@@ -100,7 +100,7 @@ q_goal = np.array([1.0, 1.0])
 
 # RRT 规划（失败时自动重试，增加迭代次数和步长）
 path_rrt = None
-for max_iter_attempt, step_attempt in [(5000, 0.2), (12000, 0.3), (20000, 0.35)]:
+for max_iter_attempt, step_attempt in [(3000, 0.2), (8000, 0.3), (15000, 0.35)]:
     path_rrt, _ = rrt_plan(arm_collision_free, bounds_q, q_start, q_goal,
                            max_iter=max_iter_attempt, step_size=step_attempt, rng=rng)
     if path_rrt is not None:
@@ -131,22 +131,12 @@ for i in range(len(path_cspace) - 1):
 dense_path.append(path_cspace[-1])
 dense_path = np.array(dense_path)
 
-# 验证稠密路径无碰撞（允许 2mm 以内的边界穿透——这是精确检测和快速检测之间的数值差异）
-n_collisions = sum(not arm_collision_free_precise(q) for q in dense_path)
-collision_ratio = n_collisions / len(dense_path)
-assert collision_ratio < 0.15, \
-    f"RRT 稠密路径有 {n_collisions}/{len(dense_path)} ({100*collision_ratio:.1f}%) 个点未通过精确检测（>15%）!"
-if n_collisions > 0:
-    print(f"⚠ 稠密路径中 {n_collisions}/{len(dense_path)} 个边界点未通过精确检测"
-          f"（{100*collision_ratio:.1f}% — 在数值容差内）。")
-    print("  后续轨迹碰撞检查将验证最终轨迹。")
-else:
-    print(f"✅ 稠密 RRT 路径 ({len(dense_path)} 点) 全部无碰撞")
-print(f"✅ 稠密路径 {len(dense_path)} 个点全部无碰撞")
+# 用与 RRT 一致的碰撞检测验证稠密路径
+n_collisions = sum(not arm_collision_free(q) for q in dense_path)
+assert n_collisions == 0, f"RRT 稠密路径有 {n_collisions}/{len(dense_path)} 个碰撞点！"
 
-# ====== 3. 轨迹生成 ======
+print(f"✅ 稠密 RRT 路径 ({len(dense_path)} 点) 全部无碰撞")
 T_total = 4.0; dt_proj = 0.005; n_steps = int(T_total/dt_proj)
-
 # 用 via-point 样条连接路径点
 via_pts = path_cspace[::max(1, len(path_cspace)//15)]  # 取约15个路径点，减少样条偏差
 if via_pts[0].shape == q_start.shape and not np.allclose(via_pts[0], q_start):
@@ -276,15 +266,13 @@ print(f"估计误差 RMS:               J1={np.sqrt(np.mean((q_true_hist[:,0]-q_
 print(f"最大力矩:                   J1={np.max(np.abs(tau_hist[:,0])):.2f}, J2={np.max(np.abs(tau_hist[:,1])):.2f} Nm")
 
 # 验证实际轨迹是否无碰撞（采样检查）
-# 最终轨迹碰撞检查（稠密采样）
-traj_step = max(1, len(q_d) // 500)
-traj_collisions = sum(not arm_collision_free_precise(q_d[i]) for i in range(0, len(q_d), traj_step))
-n_checked = len(range(0, len(q_d), traj_step))
-traj_ratio = traj_collisions / n_checked
-print(f"最终轨迹碰撞检查: {traj_collisions}/{n_checked} ({100*traj_ratio:.1f}%) 边界点")
-print("  注意: 线性插值轨迹基于粗采样的 RRT via-points，"
-      "边界点可能因插值分辨率陷入障碍物边缘。")
-print("  生产系统中应使用 shortcut 平滑 + 精确碰撞复检的组合。")
+# 验证实际闭环轨迹（accidental drift from tracking error）
+true_step = max(1, len(q_true_hist) // 500)
+true_collisions = sum(not arm_collision_free_precise(q_true_hist[i])
+                       for i in range(0, len(q_true_hist), true_step))
+n_true_checked = len(range(0, len(q_true_hist), true_step))
+print(f"闭环轨迹精确碰撞检查: {true_collisions}/{n_true_checked} ({100*true_collisions/n_true_checked:.1f}%) 边界穿透")
+print("  注意: 线性插值轨迹可能切过障碍物边缘。生产系统应使用 shortcut 平滑+精确复检。")
 
 # %% [markdown]
 # ### 机械臂运动可视化

@@ -105,7 +105,7 @@
 # %% [markdown]
 # ### 6.2 Wrench 的对偶变换
 #
-# Wrench $\mathcal{F} = [\mathbf{n}; \mathbf{f}]$（力+力矩）按照 Adjoint 的**转置逆**变换：
+# Wrench $\mathcal{F} = [\mathbf{n}; \mathbf{f}]$（力矩+力，与 $[\boldsymbol{\omega};\mathbf{v}]$ 对偶）按 Adjoint 的**转置逆**变换：
 # $$\mathcal{F}_s = \text{Ad}_T^{-T} \mathcal{F}_b = \begin{bmatrix} R & [\mathbf{p}]_\times R \\ 0 & R \end{bmatrix} \begin{bmatrix} \mathbf{n}_b \\ \mathbf{f}_b \end{bmatrix}$$
 #
 # $\boldsymbol{\tau} = \mathbf{J}^T \mathbf{F}$ 来自虚功原理（$\boldsymbol{\tau}^T\dot{\mathbf{q}} = \mathbf{F}^T\mathbf{V}$），

@@ -268,6 +268,7 @@ def prm_plan(c_space_free: Callable[[np.ndarray], bool],
             # 边碰撞检测（沿整条边插值）
             if edge_collision_free(qi, samples[j], c_space_free):
                 adj[i].append((j, dists[j]))
+                adj[j].append((i, dists[j]))  # 无向图：对称连接
 
     # 如果提供了起终点，连接并搜索
     result: Dict[str, Any] = {'samples': samples, 'adj': dict(adj),

@@ -86,7 +86,7 @@ def forward_kinematics(dh_table: np.ndarray,
 
     参数:
         dh_table: (n, 4) 数组，每行 [a, alpha, d, theta]（θ 对旋转关节是变量）
-        convention: 'standard' 或 'modified'
+        convention: 'sdh' (Standard DH) 或 'mdh' (Modified DH)
     返回:
         T_end: 4×4 末端位姿矩阵
         transforms: 每个连杆的变换矩阵列表
