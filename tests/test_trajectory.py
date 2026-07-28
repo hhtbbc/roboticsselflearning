@@ -129,23 +129,78 @@ class TestTOPP:
     def test_infeasible_path_raises(self):
         """不可行路径应抛出 RuntimeError"""
         from src.robotics_learning.trajectory import topp_forward_backward_parameterization
+        import pytest
         n_s = 50
         s_vals = np.linspace(0, 1, n_s)
         f_vals = np.column_stack([s_vals, s_vals])
         fp_vals = np.ones((n_s, 2))  # f' = [1, 1]
-        # 非常紧张的加速度约束 → 传播将不可行
-        fpp_vals = np.ones((n_s, 2)) * 100.0  # 大曲率
+        # 大曲率路径 + 极严格的加速度约束 → 传播不可行
+        fpp_vals = np.ones((n_s, 2)) * 100.0
         q_dot_limits = np.array([10.0, 10.0])
-        q_ddot_limits = np.array([0.1, 0.1])  # 极严格的加速度限制
+        q_ddot_limits = np.array([0.05, 0.05])
 
-        # 应该抛出（因为大 f'' 和紧张加速度约束使 α>β）
-        try:
+        with pytest.raises(RuntimeError):
             topp_forward_backward_parameterization(
                 f_vals, fp_vals, fpp_vals, s_vals,
                 q_dot_limits, q_ddot_limits,
                 s_dot_start=0.0, s_dot_end=0.0
             )
-            # 如果不抛出,检查结果是否合理
-            pass
-        except RuntimeError:
-            pass  # 预期行为
+
+    def test_acceleration_constraint_satisfied(self):
+        """验证实际关节加速度满足约束"""
+        from src.robotics_learning.trajectory import topp_forward_backward_parameterization
+        n_s = 200
+        s_vals = np.linspace(0, 1, n_s)
+        ds = s_vals[1] - s_vals[0]
+        # 线性路径 + 小二阶导: q(s)=[s, 0.5s], f'=[1,0.5], f''=[0.1*sin(2πs), 0]
+        f_vals = np.column_stack([s_vals, 0.5 * s_vals])
+        fp_vals = np.tile(np.array([1.0, 0.5]), (n_s, 1))
+        fpp_vals = np.column_stack([0.1 * np.sin(2 * np.pi * s_vals), np.zeros(n_s)])
+        q_dot_limits = np.array([3.0, 4.0])
+        q_ddot_limits = np.array([20.0, 25.0])
+
+        result = topp_forward_backward_parameterization(
+            f_vals, fp_vals, fpp_vals, s_vals,
+            q_dot_limits, q_ddot_limits,
+            s_dot_start=0.0, s_dot_end=0.0
+        )
+        s_dot_mvc, s_dot_fwd, s_dot_bwd, s_dot_approx, t_vals = result
+
+        # 区间加速度: s̈_k = (ṡ_{k+1}² - ṡ_k²) / (2 Δs)
+        s_ddot = (s_dot_approx[1:]**2 - s_dot_approx[:-1]**2) / (2 * ds)
+
+        # 关节速度: q̇ = f'(s) ṡ
+        q_dot = fp_vals * s_dot_approx[:, None]
+        # 关节加速度: q̈ = f'(s) s̈ + f''(s) ṡ²  (注意尺寸: s̈ 有 n_s-1 个点)
+        q_ddot = (fp_vals[:-1] * s_ddot[:, None] +
+                  fpp_vals[:-1] * s_dot_approx[:-1, None]**2)
+
+        tol = 1e-6
+        assert np.all(np.abs(q_dot) <= q_dot_limits[None, :] * 1.01 + tol), \
+            f"Velocity violated: max|q̇|={np.max(np.abs(q_dot))}"
+        assert np.all(np.abs(q_ddot) <= q_ddot_limits[None, :] * 1.01 + tol), \
+            f"Acceleration violated: max|q̈|={np.max(np.abs(q_ddot))}"
+
+    def test_input_validation(self):
+        """输入验证应拒绝明显非法的参数"""
+        from src.robotics_learning.trajectory import topp_forward_backward_parameterization
+        import pytest
+
+        n_s = 10
+        s_vals = np.linspace(0, 1, n_s)
+        fp = np.ones((n_s, 2))
+        fpp = np.zeros((n_s, 2))
+        fv = np.column_stack([s_vals, s_vals])
+
+        # 非正速度上限
+        with pytest.raises(ValueError, match="q_dot_limits"):
+            topp_forward_backward_parameterization(
+                fv, fp, fpp, s_vals,
+                np.array([0.0, 1.0]), np.array([10.0, 10.0]))
+
+        # s_dot_start 超过 MVC
+        with pytest.raises(ValueError, match="MVC"):
+            topp_forward_backward_parameterization(
+                fv, fp, fpp, s_vals,
+                np.array([1.0, 1.0]), np.array([10.0, 10.0]),
+                s_dot_start=1e9, s_dot_end=0.0)

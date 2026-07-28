@@ -144,8 +144,8 @@ def main():
 
 
 def check_nbconvert(args):
-    """回退模式：使用 nbconvert --execute (会覆盖原文件)"""
-    print("⚠ 使用 nbconvert 模式 — 注意会原地修改 .ipynb 文件")
+    """兼容模式：使用 nbconvert --execute 输出至 outputs/ 目录 (不覆盖原文件)"""
+    OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
     if args:
         files = [NOTEBOOKS / f for f in args if not f.startswith("--")]
     else:
@@ -153,14 +153,15 @@ def check_nbconvert(args):
 
     results = []
     for f in files:
+        out_f = OUTPUT_DIR / f.name
         print(f"Checking: {f.name} ... ", end="", flush=True)
         try:
             result = subprocess.run(
                 ["uv", "run", "jupyter", "nbconvert", "--to", "notebook",
-                 "--execute", "--inplace", str(f),
+                 "--execute", str(f),
                  "--ExecutePreprocessor.timeout", "300",
                  "--ExecutePreprocessor.kernel_name", "robotics-learning",
-                 "--output-dir", str(NOTEBOOKS)],
+                 "--output", str(out_f)],
                 capture_output=True, text=True, timeout=360, cwd=ROOT
             )
             success = result.returncode == 0

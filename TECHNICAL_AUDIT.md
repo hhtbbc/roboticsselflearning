@@ -95,13 +95,46 @@
 
 ---
 
-## 仍待处理（2026-07-28）
+## 当前状态摘要 (2026-07-28, 83 tests, 11 轮修复)
 
-| # | 问题 | 优先级 |
-|---|------|:------:|
-| 1 | NB04b/05b 代码仍使用局部定义的旧版 adjoint/se3_hat | P2 |
-| 2 | README 索引未更新至 45 个 Notebook | P3 |
-| 3 | time_optimal_parameterization 重命名为 velocity_mvc_from_joint_limits (别名保留) | P1 |
-| 4 | NB14 Notebook + 公共 TOPP 接口衔接（NB 使用独立实现,应统一调用轨迹模块） | P1 |
-| 5 | Jupytext 双向同步未配置 | P3 |
-| 6 | 估计模块缺少完整 UKF predict/update 实现 | P1 |
+### P0 — 全部已修复
+所有 21 项已记录的 P0 错误均已修复，包括 DH、IK、TOPP、碰撞、EKF、PF、惯性参数、轴角边界、slerp、周期拓扑等。
+
+### P1 — 章节内容覆盖状态
+
+| # | 章节 | 当前状态 |
+|---|------|--------|
+| 1 | SE(3)/twist/Adjoint/PoE | ✅ NB04b + transforms 模块已实现 |
+| 2 | 加速度运动学 | ✅ NB07b |
+| 3 | 空间向量动力学(RNEA/CRBA/ABA) | ⚠ NB11 有 RNEA, CRBA/ABA 待实现 |
+| 4 | 数值优化(Gauss-Newton/LM/KKT/QP) | ✅ NB06b |
+| 5 | 轨迹优化和 kinodynamic 规划 | ⚠ NB16b/16c 有简介, 待完整实现 |
+| 6 | LQR/LQG/MPC | ⚠ NB17b/18b 有简介, LQG 缺失 |
+| 7 | ESKF 和 IMU 预积分 | ⚠ NB23b/23c 有简介, 待完整实现 |
+| 8 | 相机几何/PnP/ICP/SLAM | ⚠ NB24b/24c 有示例, RANSAC/point-to-plane/因子图待补充 |
+| 9 | 移动机器人运动学 | ✅ NB05c |
+| 10 | 接触动力学和抓取 | ⚠ NB12c 有简介 |
+| 11 | UKF 完整 predict/update | ⚠ ukf_sigma_points 辅助函数可用, 缺完整实现 |
+| 12 | 自适应控制/ILC | ⚠ NB18b 有简介 |
+
+### P2/P3 — 工程和体验
+
+| # | 问题 | 状态 |
+|---|------|:----:|
+| 1 | NB04b/05b 仍使用旧版 adjoint/se3_hat | ⏳ |
+| 2 | README 索引未更新至 45 个 Notebook | ⏳ |
+| 3 | Jupytext 双向同步未配置 | ⏳ |
+| 4 | 部分 Notebook 缺少"本节约定"和"参考资料"节 | ⏳ |
+| 5 | 部分解答链接指向不存在文件 | ⏳ |
+
+### 仍待处理（功能完善）
+
+| # | 优先级 | 问题 |
+|---|:------:|------|
+| 1 | P1 | 完整 UKF 实现 (predict + update + 权重传播) |
+| 2 | P1 | CRBA/ABA 动力学算法 |
+| 3 | P2 | 真·ICP (KD-tree 最近邻 + 距离门限 + 外点剔除) |
+| 4 | P2 | NB16c kinodynamic 完整实现 |
+| 5 | P2 | ESKF 完整实现在 SE(3) 上的应用 |
+| 6 | P3 | KalmanFilter.update() 支持可选的 C, R 参数 |
+| 7 | P3 | 全量 Notebook CI smoke test (需 Jupyter kernel) |

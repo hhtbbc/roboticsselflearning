@@ -52,11 +52,23 @@ class ConfigurationSpace:
         q_norm = cspace.normalize(q)
         ok = cspace.within_bounds(q)
     """
+    ALLOWED_JOINT_TYPES = {'continuous', 'revolute', 'prismatic'}
+
     def __init__(self, bounds: np.ndarray, joint_types: List[str] = None):
-        self.bounds = np.asarray(bounds)
+        self.bounds = np.asarray(bounds, dtype=float)
+        if self.bounds.ndim != 2 or self.bounds.shape[1] != 2:
+            raise ValueError(f"bounds must be (dim, 2), got {self.bounds.shape}")
+        if np.any(~np.isfinite(self.bounds)):
+            raise ValueError("bounds must not contain NaN or Inf")
         self.dim = self.bounds.shape[0]
         # 默认全部为 revolute (带限位)，不默认 continuous
         self.joint_types = joint_types or ['revolute'] * self.dim
+        if len(self.joint_types) != self.dim:
+            raise ValueError(f"joint_types length {len(self.joint_types)} != dim {self.dim}")
+        unknown = set(self.joint_types) - self.ALLOWED_JOINT_TYPES
+        if unknown:
+            raise ValueError(f"Unknown joint types: {unknown}. "
+                           f"Allowed: {self.ALLOWED_JOINT_TYPES}")
 
     def _wrap_dim(self, i: int, val: float) -> float:
         """仅对 continuous 关节执行 wrap"""
@@ -153,13 +165,15 @@ def edge_collision_free(q_a: np.ndarray, q_b: np.ndarray,
     沿整条边 (q_a → q_b) 以给定分辨率插值检测碰撞。
 
     仅 'continuous' 关节使用最短弧插值，其它使用线性插值。
-    采样数 = max(2, ceil(periodic_distance / resolution))
+    使用 n_segments+1 个采样点（含端点），保证相邻点间距 ≤ resolution。
 
     返回: True 如果整条边都无碰撞
     """
+    if resolution <= 0:
+        raise ValueError(f"resolution must be positive, got {resolution}")
     dist = periodic_distance(q_a, q_b, joint_types)
-    n_samples = max(2, int(np.ceil(dist / resolution)))
-    for alpha in np.linspace(0, 1, n_samples):
+    n_segments = max(1, int(np.ceil(dist / resolution)))
+    for alpha in np.linspace(0, 1, n_segments + 1):
         if joint_types is not None:
             q_mid = q_a.copy()
             for d, jt in enumerate(joint_types):
@@ -659,7 +673,7 @@ def potential_field_plan(q_start: np.ndarray, q_goal: np.ndarray,
                          k_att: float = 1.0, k_rep: float = 100.0,
                          rho_0: float = 2.0,
                          step_size: float = 0.05, max_iter: int = 1000,
-                         tol: float = 0.1) -> Tuple[List[np.ndarray], np.ndarray]:
+                         tol: float = 0.1) -> dict:
     """
     势场法规划
 
@@ -671,8 +685,8 @@ def potential_field_plan(q_start: np.ndarray, q_goal: np.ndarray,
         step_size, max_iter, tol: 迭代参数
 
     返回:
-        path: 路径点列表
-        U: 势能值历史
+        dict: {'path': list, 'U_history': array, 'success': bool, 'reason': str}
+            reason ∈ {'reached_goal', 'collision', 'local_minimum', 'max_iterations'}
     """
     q = q_start.copy()
     path = [q.copy()]
@@ -693,7 +707,8 @@ def potential_field_plan(q_start: np.ndarray, q_goal: np.ndarray,
             if rho <= 0:
                 # 机器人已进入障碍物内部 — 碰撞
                 U_history.append(U_att + 1e10)
-                return path, np.array(U_history)
+                return {'path': path, 'U_history': np.array(U_history),
+                        'success': False, 'reason': 'collision'}
             if rho < rho_0:
                 direction = (q - obs['center']) / np.linalg.norm(q - obs['center'])
                 f_rep += k_rep * (1/rho - 1/rho_0) * (1/rho**2) * direction
@@ -704,12 +719,15 @@ def potential_field_plan(q_start: np.ndarray, q_goal: np.ndarray,
 
         if np.linalg.norm(f_total) < 1e-10:
             # 局部极小值
-            break
+            return {'path': path, 'U_history': np.array(U_history),
+                    'success': False, 'reason': 'local_minimum'}
 
         q = q + step_size * f_total / np.linalg.norm(f_total)
         path.append(q.copy())
 
         if np.linalg.norm(q - q_goal) < tol:
-            break
+            return {'path': path, 'U_history': np.array(U_history),
+                    'success': True, 'reason': 'reached_goal'}
 
-    return path, np.array(U_history)
+    return {'path': path, 'U_history': np.array(U_history),
+            'success': False, 'reason': 'max_iterations'}

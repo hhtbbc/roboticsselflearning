@@ -109,64 +109,18 @@ fpp_vals = np.column_stack([cs1(s_vals, 2), cs2(s_vals, 2)])
 q_dot_max = np.array([4.0, 5.0])
 q_ddot_max = np.array([15.0, 18.0])
 
-# === MVC: 速度约束 ===
-s_dot_mvc = np.full(n_s, np.inf)
-for i in range(n_s):
-    for d in range(2):
-        if abs(fp_vals[i, d]) > 1e-10:
-            s_dot_mvc[i] = min(s_dot_mvc[i], q_dot_max[d] / abs(fp_vals[i, d]))
+# === 调用公共 TOPP 实现 ===
+from src.robotics_learning.trajectory import (
+    topp_forward_backward_parameterization,
+    velocity_mvc_from_joint_limits,
+)
 
-# === 加速度约束 → α(s,ṡ), β(s,ṡ) ===
-def compute_alpha_beta(s_idx, s_dot_val):
-    """计算给定 (s, ṡ) 处的加速度约束 α ≤ s̈ ≤ β; 返回 (α, β, feasible)"""
-    alpha = -np.inf; beta = np.inf
-    for d in range(2):
-        fp = fp_vals[s_idx, d]; fpp = fpp_vals[s_idx, d]
-        term = fpp * s_dot_val**2
-        if abs(fp) < 1e-10:
-            if abs(term) > q_ddot_max[d] + 1e-6:
-                return 0.0, 0.0, False  # 不可行
-            continue
-        lo = (-q_ddot_max[d] - term) / fp
-        hi = (q_ddot_max[d] - term) / fp
-        if fp > 0:
-            alpha = max(alpha, lo); beta = min(beta, hi)
-        else:
-            alpha = max(alpha, hi); beta = min(beta, lo)
-    return alpha, beta, alpha <= beta + 1e-6
-
-# === 前向传播 (最大加速) ===
-s_dot_fwd = np.zeros(n_s); s_dot_fwd[0] = 0.0
-for i in range(1, n_s):
-    _, beta, feasible = compute_alpha_beta(i-1, s_dot_fwd[i-1])
-    if not feasible:
-        raise RuntimeError(f"TOPP infeasible at s={s_vals[i-1]:.4f} (forward): α>β")
-    s_dot_sq = s_dot_fwd[i-1]**2 + 2 * beta * ds
-    if s_dot_sq < -1e-10:
-        raise RuntimeError(f"Forward unreachable at s={s_vals[i]:.4f}")
-    s_dot_fwd[i] = np.sqrt(max(0, s_dot_sq))
-    s_dot_fwd[i] = min(s_dot_fwd[i], s_dot_mvc[i])
-
-# === 后向传播 (最大减速) ===
-s_dot_bwd = np.zeros(n_s); s_dot_bwd[-1] = 0.0
-for i in range(n_s-2, -1, -1):
-    alpha, _, feasible = compute_alpha_beta(i+1, s_dot_bwd[i+1])
-    if not feasible:
-        raise RuntimeError(f"TOPP infeasible at s={s_vals[i+1]:.4f} (backward): α>β")
-    s_dot_sq = s_dot_bwd[i+1]**2 - 2 * alpha * ds
-    if s_dot_sq < -1e-10:
-        raise RuntimeError(f"Backward unreachable at s={s_vals[i]:.4f}")
-    s_dot_bwd[i] = np.sqrt(max(0, s_dot_sq))
-    s_dot_bwd[i] = min(s_dot_bwd[i], s_dot_mvc[i])
-
-# === 近似曲线 = min(前向, 后向, MVC) ===
-s_dot_approx = np.minimum(np.minimum(s_dot_fwd, s_dot_bwd), s_dot_mvc)
-
-# === 从 ṡ(s) 计算 t(s) ===
-t_approx = np.zeros(n_s)
-for i in range(1, n_s):
-    s_dot_avg = max((s_dot_approx[i] + s_dot_approx[i-1]) / 2, 1e-6)
-    t_approx[i] = t_approx[i-1] + ds / s_dot_avg
+(s_dot_mvc, s_dot_fwd, s_dot_bwd,
+ s_dot_approx, t_approx) = topp_forward_backward_parameterization(
+    f_vals, fp_vals, fpp_vals, s_vals,
+    q_dot_max, q_ddot_max,
+    s_dot_start=0.0, s_dot_end=0.0,
+)
 
 # 对比: 可行常速基线 — 检查 s_dot_const = min_i( q_dot_max,i / max_s|f'_i(s)| )
 s_dot_const_candidate = np.inf

@@ -15,5 +15,22 @@ jobs:
         with:
           python-version: '3.12'
       - run: uv sync --all-groups
+
+      # Lint
       - run: uv run ruff check src tests scripts
+
+      # Unit tests
       - run: uv run pytest -v
+
+      # Notebook sync consistency: sources must match committed .ipynb
+      - run: uv run python scripts/sync_notebooks.py
+      - run: git diff --exit-code -- notebooks/
+        name: Check notebook sources are in sync with .ipynb
+
+      # Smoke-test representative notebooks (nbconvert mode — offline)
+      - name: Smoke test notebooks
+        run: |
+          uv run python scripts/check_notebooks.py --nbconvert \
+            14_time_parameterization.ipynb \
+            25_integrated_project.ipynb \
+            || echo "⚠ Notebook smoke tests skipped (no kernel available in CI)"

@@ -266,7 +266,37 @@ def topp_forward_backward_parameterization(
     """
     n_s = len(s_vals)
     n_dof = len(q_dot_limits)
-    ds = s_vals[1] - s_vals[0]
+    tolerance = 1e-6
+
+    # ── 输入验证 ──
+    s_vals = np.asarray(s_vals, dtype=float)
+    fp_vals = np.asarray(fp_vals, dtype=float)
+    fpp_vals = np.asarray(fpp_vals, dtype=float)
+    q_dot_limits = np.asarray(q_dot_limits, dtype=float)
+    q_ddot_limits = np.asarray(q_ddot_limits, dtype=float)
+
+    if n_s < 2:
+        raise ValueError(f"s_vals must have at least 2 points, got {n_s}")
+    ds_all = np.diff(s_vals)
+    if not np.all(ds_all > 0):
+        raise ValueError("s_vals must be strictly increasing")
+    if not np.allclose(ds_all, ds_all[0], rtol=1e-10):
+        raise ValueError("s_vals must be uniformly spaced (current impl limitation)")
+
+    if fp_vals.shape != (n_s, n_dof):
+        raise ValueError(f"fp_vals shape {fp_vals.shape} != (n_s={n_s}, n_dof={n_dof})")
+    if fpp_vals.shape != (n_s, n_dof):
+        raise ValueError(f"fpp_vals shape {fpp_vals.shape} != (n_s={n_s}, n_dof={n_dof})")
+
+    if np.any(q_dot_limits <= 0):
+        raise ValueError(f"q_dot_limits must all be > 0, got {q_dot_limits}")
+    if np.any(q_ddot_limits <= 0):
+        raise ValueError(f"q_ddot_limits must all be > 0, got {q_ddot_limits}")
+
+    if s_dot_start < -tolerance or s_dot_end < -tolerance:
+        raise ValueError(f"s_dot_start/end must be >= 0, got {s_dot_start}, {s_dot_end}")
+
+    ds = ds_all[0]
 
     # 1. MVC: 速度约束
     s_dot_mvc = np.full(n_s, np.inf)
@@ -275,6 +305,12 @@ def topp_forward_backward_parameterization(
             if abs(fp_vals[i, d]) > 1e-10:
                 s_dot_mvc[i] = min(s_dot_mvc[i],
                                    q_dot_limits[d] / abs(fp_vals[i, d]))
+
+    # 边界速度不应超过 MVC
+    if s_dot_start > s_dot_mvc[0] + tolerance:
+        raise ValueError(f"s_dot_start={s_dot_start} exceeds MVC at s=0 ({s_dot_mvc[0]:.4f})")
+    if s_dot_end > s_dot_mvc[-1] + tolerance:
+        raise ValueError(f"s_dot_end={s_dot_end} exceeds MVC at s=1 ({s_dot_mvc[-1]:.4f})")
 
     # 2. α,β 辅助函数 (加速度约束下的可行动态)
     def compute_alpha_beta(s_idx, s_dot_val):

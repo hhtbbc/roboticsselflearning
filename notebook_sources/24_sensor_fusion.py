@@ -126,6 +126,10 @@ sigma_f = np.zeros((N_f, 2))
 kf_f = KalmanFilter(A_f, np.zeros((2,1)), C_enc, Q_f, R_enc,
                     mu=np.array([0, 0]), Sigma=np.eye(2)*1.0)
 
+# 初始化第 0 时刻的估计
+mu_f[0] = kf_f.mu.copy()
+sigma_f[0] = np.sqrt(np.diag(kf_f.Sigma))
+
 for t in range(1, N_f):
     true_q[t] = true_q[t-1] + true_qd[t-1]*dt_f
     true_qd[t] = true_qd[t-1] + rng.normal(0, np.sqrt(0.01))
@@ -153,14 +157,14 @@ fig, axes = plt.subplots(2, 1, figsize=(12, 8), sharex=True)
 axes[0].plot(t_f, true_q, 'k-', linewidth=2, label='True θ')
 axes[0].plot(t_f, mu_f[:, 0], 'b-', linewidth=1.5, label='Estimate θ̂')
 axes[0].fill_between(t_f, mu_f[:,0]-2*sigma_f[:,0], mu_f[:,0]+2*sigma_f[:,0], color='blue', alpha=0.15)
-axes[0].set_ylabel('θ (rad)'); axes[0].set_title('Encoder + IMU Fusion — Position')
+axes[0].set_ylabel('θ (rad)'); axes[0].set_title('Encoder + Gyroscope Fusion — Position')
 axes[0].legend(); axes[0].grid(True, alpha=0.3)
 
 axes[1].plot(t_f, true_qd, 'k-', linewidth=1, label='True θ̇')
 axes[1].plot(t_f, mu_f[:, 1], 'r-', linewidth=1.5, label='Estimate θ̇̂')
 axes[1].fill_between(t_f, mu_f[:,1]-2*sigma_f[:,1], mu_f[:,1]+2*sigma_f[:,1], color='red', alpha=0.15)
 axes[1].set_ylabel('θ̇ (rad/s)'); axes[1].set_xlabel('t (s)')
-axes[1].set_title('Encoder + IMU Fusion — Velocity')
+axes[1].set_title('Encoder + Gyroscope Fusion — Velocity')
 axes[1].legend(); axes[1].grid(True, alpha=0.3)
 
 plt.tight_layout()

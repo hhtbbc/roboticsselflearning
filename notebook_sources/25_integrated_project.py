@@ -66,6 +66,9 @@ l1, l2 = 1.0, 0.8
 link_radius = 0.015
 dyn = TwoLinkArmDynamics(m1=1.0, m2=1.0, l1=l1, l2=l2, g=9.81)
 
+# 统一关节类型 — 2R 臂两关节均为带硬限位的旋转关节
+JOINT_TYPES = ['revolute', 'revolute']
+
 # ====== 2. 运动规划 (C-space RRT，使用精确碰撞) ======
 obstacle_centers = np.array([[0.8, 0.3], [-0.5, 0.6], [1.2, -0.4]])
 obstacle_radii = np.array([0.06, 0.05, 0.08])
@@ -93,7 +96,7 @@ path_rrt = None
 for max_iter_attempt, step_attempt in [(3000, 0.2), (8000, 0.3), (15000, 0.35)]:
     path_rrt, _ = rrt_plan(arm_collision_free_precise, bounds_q, q_start, q_goal,
                            max_iter=max_iter_attempt, step_size=step_attempt,
-                           rng=rng, joint_types=['revolute', 'revolute'])
+                           rng=rng, joint_types=JOINT_TYPES)
     if path_rrt is not None:
         print(f"RRT 成功 (max_iter={max_iter_attempt})")
         break
@@ -131,14 +134,14 @@ def shortcut_path(path, collision_fn, resolution=0.02, n_attempts=200,
 
 path_short = shortcut_path(path_cspace, arm_collision_free_precise,
                            resolution=0.01, n_attempts=500,
-                           joint_types=['revolute', 'revolute'], rng=rng)
+                           joint_types=JOINT_TYPES, rng=rng)
 print(f"Shortcut: {len(path_cspace)} → {len(path_short)} 路径点 "
       f"({100*(1-len(path_short)/len(path_cspace)):.0f}% 精简)")
 # 验证 shortcut 所有边无碰撞
 for qa, qb in zip(path_short[:-1], path_short[1:]):
     assert edge_collision_free(np.array(qa), np.array(qb),
                                arm_collision_free_precise, resolution=0.005,
-                               joint_types=['revolute', 'revolute']), \
+                               joint_types=JOINT_TYPES), \
         "Shortcut 边碰撞！"
 print(f"✅ 所有 shortcut 边通过精确碰撞检查")
 
@@ -150,22 +153,31 @@ print(f"✅ 所有 shortcut 边通过精确碰撞检查")
 
 # %%
 T_total = 4.0; dt_proj = 0.005; n_steps = int(T_total/dt_proj)
-via_time = np.linspace(0, T_total, len(path_short))
 via_arr = np.array(path_short)
 
-# 使用自然三次样条 (C² 连续，固定 4s 总时长；从静止启动建议用 clamped spline)
-cs1_q = CubicSpline(via_time, via_arr[:, 0], bc_type='natural')
-cs2_q = CubicSpline(via_time, via_arr[:, 1], bc_type='natural')
+# 按路径弧长分配时间 (各段时间 ∝ 其 C-space 段长度)
+segment_lengths = np.linalg.norm(np.diff(via_arr, axis=0), axis=1)
+cum_len = np.concatenate([[0.0], np.cumsum(segment_lengths)])
+cum_len = cum_len / cum_len[-1]  # 归一化
+via_time = T_total * cum_len
+
+# Clamped cubic spline：显式指定端点速度为零 (适用于从静止启动)
+cs1_q = CubicSpline(via_time, via_arr[:, 0], bc_type=((1, 0.0), (1, 0.0)))
+cs2_q = CubicSpline(via_time, via_arr[:, 1], bc_type=((1, 0.0), (1, 0.0)))
 
 t_traj = np.linspace(0, T_total, n_steps)
 q_d = np.column_stack([cs1_q(t_traj), cs2_q(t_traj)])
 qd_d = np.column_stack([cs1_q(t_traj, 1), cs2_q(t_traj, 1)])
 qdd_d = np.column_stack([cs1_q(t_traj, 2), cs2_q(t_traj, 2)])
 
-# 平滑后精确碰撞复检 — 对期望轨迹全量验证
+# 平滑后精确碰撞复检 — 逐状态 + 逐边全量验证
 assert all(arm_collision_free_precise(q) for q in q_d), \
-    "平滑后期望轨迹存在碰撞！需增加 via-point 密度。"
-print(f"✅ 期望轨迹 ({len(q_d)} 步, {T_total}s, C²三次样条) 全量精确碰撞复检通过")
+    "期望轨迹离散状态存在碰撞！"
+for qa, qb in zip(q_d[:-1], q_d[1:]):
+    assert edge_collision_free(qa, qb, arm_collision_free_precise,
+                               resolution=0.005, joint_types=JOINT_TYPES), \
+        f"期望轨迹边存在碰撞: {qa} → {qb}"
+print(f"✅ 期望轨迹 ({len(q_d)} 步 + {len(q_d)-1} 边, T={T_total}s, clamped C²样条) 全量精确碰撞复检通过")
 
 # 速度/加速度约束 — 逐关节验证
 q_dot_max = np.array([4.0, 5.0])
@@ -199,15 +211,20 @@ print(f"EKF Q 矩阵 (σ_a={sigma_a}, dt={dt_ekf}): "
       f"q-var={Q_ekf[0,0]:.2e}, q̇-var={Q_ekf[2,2]:.2e}")
 print(f"EKF R 矩阵 (σ_enc=0.03): diag({R_ekf[0,0]:.4f}, {R_ekf[1,1]:.4f})")
 
-# 动力学模型函数
+# 动力学积分器: 统一使用半隐式 Euler (先更新速度，再用新速度更新位置)
+def integrate_dynamics(q, qd, tau, dt):
+    """半隐式 Euler: q_{k+1}=q_k + qd_{k+1}*dt, qd_{k+1}=qd_k + qdd*dt"""
+    qdd = dyn.forward_dynamics(q, qd, tau)
+    qd_next = qd + qdd * dt
+    q_next = q + qd_next * dt
+    return q_next, qd_next, qdd
+
+# 动力学模型函数 (用于 EKF 过程模型 — 使用相同的积分器)
 def f_dynamics(x, tau):
-    """非线性动力学预测: x = [q; q_dot] → x_next"""
+    """非线性动力学预测: x = [q; q_dot] → x_next (半隐式 Euler)"""
     q_cur, qd_cur = x[:2], x[2:]
-    qdd = dyn.forward_dynamics(q_cur, qd_cur, tau)
-    x_next = x.copy()
-    x_next[:2] = q_cur + qd_cur * dt_ekf
-    x_next[2:] = qd_cur + qdd * dt_ekf
-    return x_next
+    q_next, qd_next, _ = integrate_dynamics(q_cur, qd_cur, tau, dt_ekf)
+    return np.array([q_next[0], q_next[1], qd_next[0], qd_next[1]])
 
 def A_dynamics_func(x, tau):
     """状态转移雅可比 ∂f/∂x (有限差分)"""
@@ -250,9 +267,8 @@ for i in range(1, n_steps):
     tau_max = 50.0
     tau = np.clip(tau, -tau_max, tau_max)
 
-    # 真实动力学
-    q_ddot = dyn.forward_dynamics(q_true, q_dot_true, tau)
-    q_dot_true += q_ddot * dt_proj; q_true += q_dot_true * dt_proj
+    # 真实动力学 (半隐式 Euler，与 EKF 过程模型一致)
+    q_true, q_dot_true, _ = integrate_dynamics(q_true, q_dot_true, tau, dt_proj)
 
     # 编码器测量 (σ = 0.03 rad)
     z_enc = q_true + rng.normal(0, 0.03, 2)
@@ -314,7 +330,7 @@ print(f"✅ 实际闭环轨迹 ({len(q_true_hist)} 状态) 全量无碰撞")
 for qa, qb in zip(q_true_hist[:-1], q_true_hist[1:]):
     assert edge_collision_free(qa, qb, arm_collision_free_precise,
                                resolution=0.005,
-                               joint_types=['continuous', 'continuous']), \
+                               joint_types=JOINT_TYPES), \
         f"闭环边碰撞: q={qa} → {qb}"
 print(f"✅ 闭环轨迹 {len(q_true_hist)-1} 条边全量碰撞检查通过")
 

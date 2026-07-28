@@ -84,46 +84,72 @@ print(f"Rotation error: {np.linalg.norm(so3_log(R_est.T @ R_true)):.4f} rad")
 print(f"Translation error: {np.linalg.norm(t_est - t_true):.4f} m")
 
 # 重投影可视化
+fig_rp, ax_rp = plt.subplots(figsize=(8, 6))
 for p, R, t, c, label in [(pts_3d, R_true, t_true, 'green', 'True'), (pts_3d, R_est, t_est, 'blue', 'Estimated')]:
-    pass  # 略过在此
+    for p3 in p:
+        pc = R @ p3 + t
+        if pc[2] > 0:
+            uv = K_pnp @ pc; uv = uv[:2] / uv[2]
+            ax_rp.scatter(*uv, c=c, s=20, alpha=0.6, label=label)
+ax_rp.scatter(pts_2d[:, 0], pts_2d[:, 1], c='red', s=30, marker='+',
+              linewidths=2, label='Measured')
+handles, labels = ax_rp.get_legend_handles_labels()
+by_label = dict(zip(labels, handles))
+ax_rp.legend(by_label.values(), by_label.keys())
+ax_rp.set_xlabel('u (px)'); ax_rp.set_ylabel('v (px)')
+ax_rp.set_title('PnP — Reprojection'); ax_rp.grid(True, alpha=0.3)
+plt.tight_layout()
+plt.savefig('../outputs/24c_pnp_reprojection.png', dpi=100, bbox_inches='tight')
+plt.show()
 
 # %% [markdown]
-# ### ICP — Point-to-Point
+# ### 3.1 已知对应点云配准 — 一步 SVD
+#
+# 当对应关系已知时，最优刚体变换可通过单次 SVD 求得（不需迭代）：
+# 1. 中心化: ā = a - mean(A), b̄ = b - mean(B)
+# 2. H = Ā^T B̄ → SVD: H = U Σ V^T
+# 3. R* = V U^T (需确保 det=+1), t* = mean(B) - R* mean(A)
 
 # %%
-# 生成两个点云（真值变换 + 噪声）
-R_icp_true = axis_angle_to_rot(np.array([0, 0, 1]), 0.3)
-t_icp_true = np.array([0.5, 0.2, 0.0])
+R_svd_true = axis_angle_to_rot(np.array([0, 0, 1]), 0.3)
+t_svd_true = np.array([0.5, 0.2, 0.0])
 cloud_A = rng.uniform(-1, 1, (100, 3))
-cloud_B = np.array([R_icp_true @ p + t_icp_true + rng.normal(0, 0.02, 3) for p in cloud_A])
+cloud_B = np.array([R_svd_true @ p + t_svd_true + rng.normal(0, 0.02, 3) for p in cloud_A])
 
-# ICP 迭代 (point-to-point, 已知对应关系)
+# 一步 SVD 求解
+centroid_A = np.mean(cloud_A, axis=0)
+centroid_B = np.mean(cloud_B, axis=0)
+A_centered = cloud_A - centroid_A
+B_centered = cloud_B - centroid_B
+H = A_centered.T @ B_centered
+U, _, Vt = np.linalg.svd(H)
+R_svd = Vt.T @ U.T
+if np.linalg.det(R_svd) < 0:
+    Vt[-1] *= -1; R_svd = Vt.T @ U.T
+t_svd = centroid_B - R_svd @ centroid_A
+
+# 对齐验证
+A_aligned = np.array([R_svd @ p + t_svd for p in cloud_A])
+print(f"一步 SVD 配准: R error = {np.linalg.norm(so3_log(R_svd.T @ R_svd_true)):.4f} rad, "
+      f"t error = {np.linalg.norm(t_svd - t_svd_true):.4f} m")
+
+# 对比迭代式 ICP (实际应用需 KD-tree 最近邻 + 距离门限 + 外点剔除)
 R_icp = np.eye(3); t_icp = np.zeros(3)
 err_icp_hist = []
 
 for it in range(30):
-    # 1. 用当前估计变换源点云
     A_transformed = np.array([R_icp @ p + t_icp for p in cloud_A])
-
-    # 2. 最近邻关联 (简化：假设对应关系已知)
+    # 这里使用已知对应（教学简化）；真正 ICP 需要最近邻关联
     residuals = cloud_B - A_transformed
     err_icp_hist.append(np.mean(np.linalg.norm(residuals, axis=1)))
-
-    # 3. 求解增量变换 ΔR, Δt: min Σ||ΔR·a_i + Δt - b_i||²
-    centroid_A = np.mean(A_transformed, axis=0)
-    centroid_B = np.mean(cloud_B, axis=0)
-    H = (A_transformed - centroid_A).T @ (cloud_B - centroid_B)
-    U, _, Vt = np.linalg.svd(H)
-    R_delta = Vt.T @ U.T
+    H_icp = (A_transformed - np.mean(A_transformed, 0)).T @ (cloud_B - np.mean(cloud_B, 0))
+    U_i, _, Vt_i = np.linalg.svd(H_icp)
+    R_delta = Vt_i.T @ U_i.T
     if np.linalg.det(R_delta) < 0:
-        Vt[-1] *= -1; R_delta = Vt.T @ U.T
-    t_delta = centroid_B - R_delta @ centroid_A
-
-    # 4. 组合增量
+        Vt_i[-1] *= -1; R_delta = Vt_i.T @ U_i.T
+    t_delta = np.mean(cloud_B, 0) - R_delta @ np.mean(A_transformed, 0)
     R_icp = R_delta @ R_icp
     t_icp = R_delta @ t_icp + t_delta
-
-    # 收敛判断
     if it > 2 and abs(err_icp_hist[-1] - err_icp_hist[-2]) < 1e-8:
         break
 

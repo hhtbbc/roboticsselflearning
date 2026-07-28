@@ -125,9 +125,10 @@ def C_func(x):
     C = np.zeros((6,3))
     for i, lm in enumerate(landmarks):
         dx, dy = lm[0]-x[0], lm[1]-x[1]
-        r_sq = dx**2+dy**2; r = np.sqrt(r_sq)
+        r_sq = dx**2+dy**2
+        r = np.sqrt(max(r_sq, 1e-12))  # 保护除零
         C[2*i] = [-dx/r, -dy/r, 0]
-        C[2*i+1] = [dy/r_sq, -dx/r_sq, -1]
+        C[2*i+1] = [dy/max(r_sq, 1e-12), -dx/max(r_sq, 1e-12), -1]
     return C
 
 Q_ekf = np.diag([0.01, 0.01, 0.005])
@@ -140,9 +141,16 @@ def landmark_residual(z, z_pred):
     residual[1::2] = np.arctan2(np.sin(residual[1::2]), np.cos(residual[1::2]))
     return residual
 
+# 状态归一化: 航向角 wrap 到 [-π, π]
+def normalize_pose(x):
+    result = np.asarray(x, dtype=float).copy()
+    result[2] = np.arctan2(np.sin(result[2]), np.cos(result[2]))
+    return result
+
 ekf = ExtendedKalmanFilter(f_ekf, h_ekf, A_func, C_func, Q_ekf, R_ekf,
                            mu=np.array([1,1,np.pi/4]), Sigma=np.eye(3)*0.5,
-                           residual_fn=landmark_residual)
+                           residual_fn=landmark_residual,
+                           state_normalization_fn=normalize_pose)
 
 true_pose = np.zeros((N_ekf, 3)); true_pose[0] = [1,1,np.pi/4]
 mu_efk = np.zeros((N_ekf, 3))
