@@ -80,8 +80,7 @@
 # $$M = \begin{bmatrix} 1 & 0 & 0 & l_1+l_2 \\ 0 & 1 & 0 & 0 \\ 0 & 0 & 1 & 0 \\ 0 & 0 & 0 & 1 \end{bmatrix}$$
 #
 # 螺旋轴（绕 Z 轴旋转，旋转轴上的点分别为原点和 $(l_1,0,0)$）：
-# $$\mathcal{S}_1 = [0,0,0, 0,0,1]^T$$
-# $$\mathcal{S}_2 = [0,-l_1,0, 0,0,1]^T$$
+# $$\mathcal{S}_1 = [0,0,1, 0,0,0]^T, \quad \mathcal{S}_2 = [0,0,1, 0,-l_1,0]^T$$
 
 # %% [markdown]
 # ## 6. Python 实现
@@ -123,7 +122,7 @@ def poe_fk_body(screw_axes_body, M, q):
 l1, l2 = 1.0, 0.8
 M_2r = homogeneous_transform(np.eye(3), np.array([l1+l2, 0, 0]))
 
-# 螺旋轴 [v; ω]（Lynch & Park 约定）
+# 螺旋轴 [ω; v]（Lynch & Park 约定）
 S1 = np.array([0, 0, 1, 0, 0, 0])          # [ω; v] = 绕Z旋转, 轴上点=(0,0,0)
 S2 = np.array([0, 0, 1, 0, -l1, 0])         # [ω; v] = 绕Z旋转, 轴上点=(l1,0,0)
 

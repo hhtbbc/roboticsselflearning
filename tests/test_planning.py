@@ -56,6 +56,35 @@ class TestRRT:
                 assert blocked(q) or np.linalg.norm(q - np.array([5,5])) < 0.5
 
 
+class TestRRTStarCost:
+    def test_subtree_cost_consistency(self):
+        """RRT* 中每个非根节点的 cost 应等于 parent.cost + edge_cost"""
+        from src.robotics_learning.planning import RRTNode, _update_subtree_cost
+        root = RRTNode(np.array([0., 0.]), cost=0.0)
+        child1 = RRTNode(np.array([1., 0.]), root, cost=1.0)
+        root.children.add(child1)
+        child2 = RRTNode(np.array([1., 1.]), child1, cost=2.0)
+        child1.children.add(child2)
+        # 给 root 加 0.5
+        _update_subtree_cost(root, 0.5)
+        assert abs(root.cost - 0.5) < 1e-10
+        assert abs(child1.cost - 1.5) < 1e-10
+        assert abs(child2.cost - 2.5) < 1e-10
+
+    def test_rrt_star_nodes_have_children(self):
+        """RRT* 返回的节点应有正确的 children 集合"""
+        from src.robotics_learning.planning import rrt_star_plan
+        bounds = np.array([[0, 10], [0, 10]])
+        rng = np.random.RandomState(42)
+        _, nodes = rrt_star_plan(lambda q: True, bounds, np.array([1.,1.]), np.array([9.,9.]),
+                                  max_iter=200, step_size=0.5, rng=rng)
+        for node in nodes:
+            if node.parent is not None:
+                expected = node.parent.cost + np.linalg.norm(node.q - node.parent.q)
+                assert abs(node.cost - expected) < 1e-6, \
+                    f"node cost {node.cost:.6f} != parent.cost + edge = {expected:.6f}"
+
+
 class TestAStar:
     def test_astar_optimal(self):
         grid = create_grid_map(10, 10, [])

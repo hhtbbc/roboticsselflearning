@@ -269,7 +269,49 @@ def prm_plan(c_space_free: Callable[[np.ndarray], bool],
             if edge_collision_free(qi, samples[j], c_space_free):
                 adj[i].append((j, dists[j]))
 
-    return {'samples': samples, 'adj': adj}
+    # 如果提供了起终点，连接并搜索
+    result: Dict[str, Any] = {'samples': samples, 'adj': dict(adj),
+                                'path': None, 'success': False}
+    if start is not None and goal is not None and len(samples) > 0:
+        start_np = np.asarray(start); goal_np = np.asarray(goal)
+        # 将起终点加入图
+        n = len(samples)
+        for pt, idx in [(start_np, n), (goal_np, n+1)]:
+            all_pts = np.vstack([samples, pt.reshape(1,-1)])
+            dists = np.linalg.norm(all_pts[:-1] - pt, axis=1)
+            knn_idx = np.argsort(dists)[:k_neighbors]
+            for k in knn_idx:
+                if edge_collision_free(samples[k], pt, c_space_free):
+                    adj[idx].append((k, dists[k]))
+                    adj[k].append((idx, dists[k]))
+
+        # Dijkstra 搜索从 start 到 goal
+        start_id, goal_id = n, n+1
+        pq = [(0.0, start_id)]
+        dist_to = {start_id: 0.0}
+        parent = {}
+        while pq:
+            d, u = heapq.heappop(pq)
+            if u == goal_id:
+                path_ids = [u]
+                while path_ids[-1] in parent:
+                    path_ids.append(parent[path_ids[-1]])
+                path_pts = []
+                for pid in reversed(path_ids):
+                    if pid < n: path_pts.append(samples[pid])
+                    elif pid == n: path_pts.append(start_np)
+                    else: path_pts.append(goal_np)
+                result['path'] = path_pts
+                result['success'] = True
+                break
+            if d > dist_to.get(u, np.inf): continue
+            for v, w in adj.get(u, []):
+                nd = d + w
+                if nd < dist_to.get(v, np.inf):
+                    dist_to[v] = nd; parent[v] = u
+                    heapq.heappush(pq, (nd, v))
+
+    return result
 
 
 # =============================================================================
@@ -278,10 +320,11 @@ def prm_plan(c_space_free: Callable[[np.ndarray], bool],
 
 class RRTNode:
     """RRT 节点"""
-    __slots__ = ('q', 'parent', 'cost')
+    __slots__ = ('q', 'parent', 'children', 'cost')
     def __init__(self, q, parent=None, cost=0.0):
         self.q = q
         self.parent = parent
+        self.children = set()
         self.cost = cost
 
 
@@ -336,6 +379,7 @@ def rrt_plan(c_space_free: Callable[[np.ndarray], bool],
             continue
 
         new_node = RRTNode(q_new, nodes[nearest_idx])
+        nodes[nearest_idx].children.add(new_node)
         nodes.append(new_node)
 
         # 检查是否到达目标（额外检查到目标的边是否无碰撞）
@@ -431,6 +475,7 @@ def rrt_star_plan(c_space_free, bounds, start, goal,
                     best_cost = cost
 
         new_node = RRTNode(q_new, best_parent, best_cost)
+        best_parent.children.add(new_node)
         nodes.append(new_node)
 
         # Rewire: 用新节点改善附近节点的代价
@@ -438,12 +483,16 @@ def rrt_star_plan(c_space_free, bounds, start, goal,
             candidate_cost = new_node.cost + d
             if candidate_cost < nodes[j].cost - 1e-10:
                 if edge_collision_free(q_new, nodes[j].q, c_space_free):
-                    # 递归更新子树代价
-                    old_cost = nodes[j].cost
-                    cost_diff = candidate_cost - old_cost
-                    _update_subtree_cost(nodes[j], cost_diff)
+                    # 从旧父节点移除
+                    old_parent = nodes[j].parent
+                    if old_parent is not None:
+                        old_parent.children.discard(nodes[j])
+                    # 加入新父节点
+                    new_node.children.add(nodes[j])
+                    cost_diff = candidate_cost - nodes[j].cost
                     nodes[j].parent = new_node
-                    nodes[j].cost = candidate_cost
+                    # 递归更新此节点及其所有后代的代价
+                    _update_subtree_cost(nodes[j], cost_diff)
 
     # 在所有节点中找能连接到 goal 且代价最小的
     best_goal_cost = np.inf
@@ -469,10 +518,10 @@ def rrt_star_plan(c_space_free, bounds, start, goal,
 
 
 def _update_subtree_cost(node: RRTNode, cost_diff: float):
-    """递归更新节点的子树代价（DFS）"""
+    """递归更新节点及其所有后代的代价（DFS）"""
     node.cost += cost_diff
-    # 注意: 不做完整的子树遍历（性能考虑），只更新节点自身
-    # 完整的 RRT* 实现需要维护 children 列表来递归更新
+    for child in node.children:
+        _update_subtree_cost(child, cost_diff)
 
 
 # =============================================================================

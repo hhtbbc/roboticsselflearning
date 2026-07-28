@@ -207,11 +207,12 @@ plt.tight_layout()
 plt.savefig('../outputs/14_topp_general_path.png', dpi=100, bbox_inches='tight')
 plt.show()
 
-# 可行性验证: 检查最优曲线的实际 q̇, q̈ 是否满足约束
+# 可行性验证: 检查实际 q̇ = f'(s)ṡ, q̈ = f'(s)s̈ + f''(s)ṡ²
 q_dot_actual = fp_vals * s_dot_opt[:, None]
-# q̈ = f'(s)s̈ + f''(s)ṡ² — 近似 s̈ 由 ṡ 差分得到
-s_ddot_approx = np.gradient(s_dot_opt, ds)
-q_ddot_actual = fp_vals * s_ddot_approx[:, None] + fpp_vals * s_dot_opt[:, None]**2
+# s̈ = dṡ/dt = ṡ · dṡ/ds (链式法则)
+d_sdot_ds = np.gradient(s_dot_opt, ds)
+s_ddot_actual = s_dot_opt * d_sdot_ds  # NOT ds alone!
+q_ddot_actual = fp_vals * s_ddot_actual[:, None] + fpp_vals * s_dot_opt[:, None]**2
 v_ok = np.all(np.abs(q_dot_actual) <= q_dot_max * 1.01, axis=1)
 a_ok = np.all(np.abs(q_ddot_actual) <= q_ddot_max * 1.01, axis=1)
 print(f"TOPP 总时间: {t_path[-1]:.3f}s, 均匀: {t_uniform[-1]:.3f}s, 节省: {(1-t_path[-1]/t_uniform[-1])*100:.1f}%")
