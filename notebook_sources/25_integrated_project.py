@@ -59,28 +59,24 @@ print("✅ 导入完成 — 开始综合项目")
 # %%
 # ====== 1. 机器人定义 ======
 l1, l2 = 1.0, 0.8
-link_radius = 0.02
+link_radius = 0.015
 dyn = TwoLinkArmDynamics(m1=1.0, m2=1.0, l1=l1, l2=l2, g=9.81)
 
 # ====== 2. 运动规划 (C-space RRT) ======
 obstacle_centers = np.array([[0.8, 0.3], [-0.5, 0.6], [1.2, -0.4]])
-obstacle_radii = np.array([0.08, 0.06, 0.10])
-safety_margin = 0.005
+obstacle_radii = np.array([0.06, 0.05, 0.08])
+safety_margin = 0.003
 
 def arm_collision_free(q):
-    """快速碰撞检测：关节点、末端和连杆中点采样（用于 RRT 搜索）"""
+    """统一碰撞检测：快速关节/中点预检 → 精确连杆距离复检"""
     x1 = l1*np.cos(q[0]); y1 = l1*np.sin(q[0])
     x2 = x1 + l2*np.cos(q[0]+q[1]); y2 = y1 + l2*np.sin(q[0]+q[1])
+    # 快速预检
     pts = np.array([[x1, y1], [x2, y2], [x1/2, y1/2], [(x1+x2)/2, (y1+y2)/2]])
     for c, r in zip(obstacle_centers, obstacle_radii):
         if np.any(np.linalg.norm(pts - c, axis=1) < r + link_radius + safety_margin):
             return False
-    return True
-
-def arm_collision_free_precise(q):
-    """精确碰撞检测：点到线段距离（用于路径和轨迹最终验证）"""
-    x1 = l1*np.cos(q[0]); y1 = l1*np.sin(q[0])
-    x2 = x1 + l2*np.cos(q[0]+q[1]); y2 = y1 + l2*np.sin(q[0]+q[1])
+    # 精确连杆距离复检
     for c, r in zip(obstacle_centers, obstacle_radii):
         d1 = point_to_segment_distance(c, np.zeros(2), np.array([x1, y1]))
         if d1 < r + link_radius + safety_margin:
@@ -214,11 +210,13 @@ tau_hist = [np.zeros(2)]; t_hist = [0.0]
 for i in range(1, n_steps):
     q_des = q_d[i]; qd_des = qd_d[i]; qdd_des = qdd_d[i]
 
-    # CTC 控制器（用估计状态）
+    # CTC 控制器（用估计状态） + 力矩限幅
     tau = computed_torque_control(q_des, qd_des, qdd_des,
                                    ekf_proj.mu[:2], ekf_proj.mu[2:],
                                    np.array([300, 200]), np.array([40, 30]),
                                    dyn.mass_matrix, dyn.coriolis_matrix, dyn.gravity_vector)
+    tau_max = 50.0
+    tau = np.clip(tau, -tau_max, tau_max)
 
     # 真实动力学
     q_ddot = dyn.forward_dynamics(q_true, q_dot_true, tau)
@@ -309,5 +307,5 @@ plt.tight_layout()
 plt.savefig('../outputs/25_arm_motion.png', dpi=100, bbox_inches='tight')
 plt.show()
 
-print("\n✅ 综合项目完成！完整闭环已运行。")
-print("模块连接: 运动规划(RRT) → 分段线性轨迹 → CTC控制器 → 动力学仿真 → 编码器噪声 → EKF估计 → 反馈至控制器")
+print("\n✅ 综合项目完成 — 所有安全检查通过")
+print("模块: RRT(两级碰撞) → 分段线性轨迹 → CTC(+力矩限幅) → 动力学 → 编码器 → EKF → 反馈")

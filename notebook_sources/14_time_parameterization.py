@@ -1,6 +1,6 @@
 # ---
 # jupyter:
-#   jupytext:
+## 3. 取前向、后向和MVC的逐点下包络，得到教学近似的 \(\dot s(s)\)
 #     text_representation:
 #       extension: .py
 #       format_name: percent
