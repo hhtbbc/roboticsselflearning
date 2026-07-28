@@ -60,8 +60,9 @@ class ConfigurationSpace:
             raise ValueError(f"bounds must be (dim, 2), got {self.bounds.shape}")
         if np.any(~np.isfinite(self.bounds)):
             raise ValueError("bounds must not contain NaN or Inf")
+        if not np.all(self.bounds[:, 0] < self.bounds[:, 1]):
+            raise ValueError("bounds lower must be strictly less than upper for each dim")
         self.dim = self.bounds.shape[0]
-        # 默认全部为 revolute (带限位)，不默认 continuous
         self.joint_types = joint_types or ['revolute'] * self.dim
         if len(self.joint_types) != self.dim:
             raise ValueError(f"joint_types length {len(self.joint_types)} != dim {self.dim}")
@@ -69,6 +70,15 @@ class ConfigurationSpace:
         if unknown:
             raise ValueError(f"Unknown joint types: {unknown}. "
                            f"Allowed: {self.ALLOWED_JOINT_TYPES}")
+        # 确保 continuous 边界为 [-π, π]
+        for i, jt in enumerate(self.joint_types):
+            if jt == 'continuous':
+                if not (abs(self.bounds[i, 0] - (-np.pi)) < 1e-6 and
+                        abs(self.bounds[i, 1] - np.pi) < 1e-6):
+                    raise ValueError(
+                        f"continuous joint {i} bounds must be [-π, π], "
+                        f"got [{self.bounds[i,0]:.4f}, {self.bounds[i,1]:.4f}]"
+                    )
 
     def _wrap_dim(self, i: int, val: float) -> float:
         """仅对 continuous 关节执行 wrap"""
@@ -171,6 +181,8 @@ def edge_collision_free(q_a: np.ndarray, q_b: np.ndarray,
     """
     if resolution <= 0:
         raise ValueError(f"resolution must be positive, got {resolution}")
+    q_a = np.asarray(q_a, dtype=float)
+    q_b = np.asarray(q_b, dtype=float)
     dist = periodic_distance(q_a, q_b, joint_types)
     n_segments = max(1, int(np.ceil(dist / resolution)))
     for alpha in np.linspace(0, 1, n_segments + 1):
@@ -374,7 +386,30 @@ def prm_plan(c_space_free: Callable[[np.ndarray], bool],
     if rng is None:
         rng = np.random.RandomState()
 
+    if n_samples <= 0:
+        raise ValueError(f"n_samples must be > 0, got {n_samples}")
+    if k_neighbors <= 0:
+        raise ValueError(f"k_neighbors must be > 0, got {k_neighbors}")
+
     cspace = ConfigurationSpace(bounds, joint_types)
+
+    # 如果提供了起终点，先验证
+    if start is not None and goal is not None:
+        start_np = cspace.normalize(np.asarray(start, dtype=float))
+        goal_np = cspace.normalize(np.asarray(goal, dtype=float))
+        if not cspace.within_bounds(start_np):
+            raise ValueError(f"Start {start_np} outside bounds")
+        if not cspace.within_bounds(goal_np):
+            raise ValueError(f"Goal {goal_np} outside bounds")
+        if not c_space_free(start_np):
+            raise ValueError(f"Start {start_np} in collision")
+        if not c_space_free(goal_np):
+            raise ValueError(f"Goal {goal_np} in collision")
+        # 优先检查直接连接
+        if edge_collision_free(start_np, goal_np, c_space_free,
+                               joint_types=cspace.joint_types):
+            return {'samples': np.empty((0, cspace.dim)), 'adj': {},
+                    'path': [start_np.tolist(), goal_np.tolist()], 'success': True}
 
     # 采样
     samples = []
@@ -398,9 +433,8 @@ def prm_plan(c_space_free: Callable[[np.ndarray], bool],
     # 如果提供了起终点，连接并搜索
     result: Dict[str, Any] = {'samples': samples, 'adj': dict(adj),
                                 'path': None, 'success': False}
-    if start is not None and goal is not None and len(samples) > 0:
-        start_np = cspace.normalize(np.asarray(start))
-        goal_np = cspace.normalize(np.asarray(goal))
+    if start is not None and goal is not None:
+        # start_np/goal_np 已在前面验证并赋值
         n = len(samples)
         for pt, idx in [(start_np, n), (goal_np, n+1)]:
             dists = np.array([cspace.distance(samples[k], pt)
@@ -688,6 +722,17 @@ def potential_field_plan(q_start: np.ndarray, q_goal: np.ndarray,
         dict: {'path': list, 'U_history': array, 'success': bool, 'reason': str}
             reason ∈ {'reached_goal', 'collision', 'local_minimum', 'max_iterations'}
     """
+    if step_size <= 0:
+        raise ValueError("step_size must be > 0")
+    if max_iter <= 0:
+        raise ValueError("max_iter must be > 0")
+    if rho_0 <= 0:
+        raise ValueError("rho_0 must be > 0")
+    if tol <= 0:
+        raise ValueError("tol must be > 0")
+    if k_att <= 0 or k_rep <= 0:
+        raise ValueError("k_att and k_rep must be > 0")
+
     q = q_start.copy()
     path = [q.copy()]
     U_history = []
@@ -718,11 +763,31 @@ def potential_field_plan(q_start: np.ndarray, q_goal: np.ndarray,
         U_history.append(U_att + U_rep)
 
         if np.linalg.norm(f_total) < 1e-10:
-            # 局部极小值
             return {'path': path, 'U_history': np.array(U_history),
                     'success': False, 'reason': 'local_minimum'}
 
-        q = q + step_size * f_total / np.linalg.norm(f_total)
+        # 步进方向
+        direction = f_total / np.linalg.norm(f_total)
+        q_new = q + step_size * direction
+
+        # 检查从当前位置到新位置的线段是否穿过障碍物
+        n_segments = max(1, int(np.ceil(step_size / (0.1 * rho_0))))
+        segment_ok = True
+        for alpha in np.linspace(0, 1, n_segments + 1):
+            q_seg = q + alpha * step_size * direction
+            for obs in obstacles:
+                obs_radius = obs.get('radius', 0.0)
+                if np.linalg.norm(q_seg - obs['center']) <= obs_radius:
+                    segment_ok = False
+                    break
+            if not segment_ok:
+                break
+
+        if not segment_ok:
+            return {'path': path, 'U_history': np.array(U_history),
+                    'success': False, 'reason': 'collision'}
+
+        q = q_new
         path.append(q.copy())
 
         if np.linalg.norm(q - q_goal) < tol:

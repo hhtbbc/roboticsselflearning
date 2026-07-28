@@ -52,7 +52,6 @@ from src.robotics_learning.planning import (
     rrt_plan, edge_collision_free, point_to_segment_distance,
     wrap_to_pi
 )
-from src.robotics_learning.trajectory import quintic_trajectory
 from src.robotics_learning.control import computed_torque_control
 from src.robotics_learning.estimation import ExtendedKalmanFilter
 from src.robotics_learning.kinematics import forward_kinematics, compute_geometric_jacobian
@@ -374,4 +373,6 @@ plt.show()
 print("\n✅ 综合项目完成 — 所有安全检查通过")
 print("流水线: RRT(精确碰撞) → Shortcut → C²三次样条(固定4s) → CTC(力矩限幅) → 动力学 → 编码器(σ=0.03) → EKF(Q_d离散化)")
 print("安全验证: 期望轨迹 + 实际闭环轨迹 + 全部连续边碰撞 + 力矩限幅 全部通过")
-print("注意: 当前使用固定总时长，未接入路径时间参数化。如需约束最优时间请使用 topp_forward_backward_parameterization().")
+print("注意: 当前使用固定 4s 总时长。完整串联应调用:")
+print("  topp_forward_backward_parameterization() 从几何路径获得 s(t)，再采样 q(s(t))。")
+print("  参见 NB14 中的教学示例。")

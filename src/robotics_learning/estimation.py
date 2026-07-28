@@ -166,7 +166,18 @@ class ParticleFilter:
                  obs_noise_std: np.ndarray,
                  bounds: np.ndarray = None,
                  rng: np.random.RandomState = None,
-                 periodic_dims: List[int] = None):
+                 periodic_dims: List[int] = None,
+                 residual_fn: Callable = None):
+        if n_particles <= 0:
+            raise ValueError(f"n_particles must be > 0, got {n_particles}")
+        if dim <= 0:
+            raise ValueError(f"dim must be > 0, got {dim}")
+        if len(np.atleast_1d(process_noise_std)) != dim:
+            raise ValueError(f"process_noise_std length must be {dim}")
+        if bounds is not None:
+            bounds = np.asarray(bounds, dtype=float)
+            if bounds.shape != (dim, 2):
+                raise ValueError(f"bounds shape must be ({dim}, 2), got {bounds.shape}")
         self.N = n_particles
         self.dim = dim
         self.f, self.h = f, h
@@ -175,6 +186,7 @@ class ParticleFilter:
         self.bounds = bounds
         self.rng = rng if rng is not None else np.random.RandomState()
         self.periodic_dims = set(periodic_dims or [])
+        self.residual_fn = residual_fn or (lambda z, z_pred: z - z_pred)
 
         # 初始化粒子
         self.particles = np.zeros((n_particles, dim))
@@ -233,7 +245,7 @@ class ParticleFilter:
 
         for i in range(self.N):
             z_pred = self.h(self.particles[i])
-            residual = z - z_pred
+            residual = self.residual_fn(z, z_pred)
             # 高斯对数似然（忽略常数项，因为归一化时会消去）
             log_likelihood = -0.5 * np.sum((residual / self.obs_std) ** 2)
             log_weights[i] += log_likelihood
@@ -306,14 +318,26 @@ class ParticleFilter:
 # 完整 UKF 需要额外实现权重计算、加权均值和协方差传播。
 
 def ukf_sigma_points(mu: np.ndarray, Sigma: np.ndarray,
+                     alpha: float = 1.0, beta: float = 2.0,
                      kappa: float = 0.0) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
     """
-    生成 UKF sigma 点 (2n+1 个)，使用 Cholesky 分解。
+    生成 Scaled UKF sigma 点 (2n+1 个)，使用 Cholesky 分解。
+
+    Scaled UKF (Julier & Uhlmann):
+        λ = α² (n + κ) - n
+        sigma_points[0] = μ
+        sigma_points[i] = μ + [√((n+λ)Σ)]_i  for i=1..n
+        sigma_points[i+n] = μ - [√((n+λ)Σ)]_{i-n}
+        w_mean[0] = λ / (n + λ)
+        w_cov[0] = λ/(n+λ) + (1 - α² + β)
+        w_mean[i] = w_cov[i] = 1 / (2(n+λ))
 
     参数:
         mu: (n,) 均值
         Sigma: (n,n) 协方差 (正定)
-        kappa: 缩放参数 (通常 3-n 或 0)
+        alpha: 散布参数 (通常 1e-3 ≤ α ≤ 1, 默认 1)
+        beta: 先验知识参数 (对高斯分布取 β=2 最优)
+        kappa: 次级缩放参数 (通常 0 或 3-n)
 
     返回:
         sigma_points: (2n+1, n) sigma 点
@@ -321,23 +345,25 @@ def ukf_sigma_points(mu: np.ndarray, Sigma: np.ndarray,
         w_cov: (2n+1,) 协方差权重
     """
     n = len(mu)
-    lam = kappa
+    lam = alpha**2 * (n + kappa) - n
+
+    if n + lam <= 0:
+        raise ValueError(
+            f"n+λ = {n+lam} ≤ 0. Choose larger α or κ. "
+            f"(n={n}, α={alpha}, κ={kappa})"
+        )
 
     sigma_points = np.zeros((2*n + 1, n))
     sigma_points[0] = mu
 
-    # 权重
-    w_mean = np.full(2*n + 1, 0.5 / (n + lam))
+    w_mean = np.full(2*n + 1, 1.0 / (2 * (n + lam)))
     w_mean[0] = lam / (n + lam)
     w_cov = w_mean.copy()
-    w_cov[0] += (1.0 - 0.0**2 + 2.0)  # default: alpha=1, beta=2
-    # 简化: 标准 UKF w_cov[0] = lam/(n+lam) + (1 - α² + β)
+    w_cov[0] = lam / (n + lam) + (1 - alpha**2 + beta)
 
-    # 使用 Cholesky 分解 (数值稳定性优于 sqrtm)
     try:
         L = np.linalg.cholesky((n + lam) * Sigma)
     except np.linalg.LinAlgError:
-        # 协方差非正定时，使用对称化 + 小正则化
         Sigma_reg = 0.5 * (Sigma + Sigma.T) + np.eye(n) * 1e-8
         L = np.linalg.cholesky((n + lam) * Sigma_reg)
 

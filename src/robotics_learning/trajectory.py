@@ -237,32 +237,18 @@ def topp_forward_backward_parameterization(
 ) -> Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
     """教学版前向-后向路径速度参数化近似。
 
-    在 (s, ṡ) 相平面上:
-    1. 计算 MVC (最大速度曲线)
-    2. 前向传播: 从 s=0 用最大加速 β(s,ṡ) 前进
-    3. 后向传播: 从 s=1 用最大减速 α(s,ṡ) 后退
-    4. 取 min(前向, 后向, MVC) 作为近似曲线
-    5. 通过时间积分得到 t(s)
-
-    注意: 此为教学近似，不保证严格 TOPP-RA 时间最优或全部约束满足。
-    生产级应用请使用 toppra 库。
-
     参数:
-        f_vals: (n_s, n_dof) 路径值 q = f(s)
+        f_vals: (n_s, n_dof) 路径值 q = f(s) — 当前未在计算中使用，保留用于调试
         fp_vals: (n_s, n_dof) 路径一阶导 f'(s)
         fpp_vals: (n_s, n_dof) 路径二阶导 f''(s)
-        s_vals: (n_s,) s 网格
-        q_dot_limits: (n_dof,) 关节速度上限
-        q_ddot_limits: (n_dof,) 关节加速度上限
-        s_dot_start: s=0 处初始 ṡ
-        s_dot_end: s=1 处终端 ṡ
+        s_vals: (n_s,) 均匀 s 网格
+        q_dot_limits: (n_dof,) 关节速度上限 (正数)
+        q_ddot_limits: (n_dof,) 关节加速度上限 (正数)
+        s_dot_start: s=0 处初始 ṡ (必须 ≥ 0 且 ≤ MVC[0])
+        s_dot_end: s=1 处终端 ṡ (必须 ≥ 0 且 ≤ MVC[-1])
 
     返回:
-        s_dot_mvc: MVC 曲线
-        s_dot_fwd: 前向传播曲线
-        s_dot_bwd: 后向传播曲线
-        s_dot_approx: 近似 ṡ(s) = min(fwd, bwd, MVC)
-        t_vals: 从 ṡ(s) 积分得到的时间数组 t(s)
+        s_dot_mvc, s_dot_fwd, s_dot_bwd, s_dot_approx, t_vals
     """
     n_s = len(s_vals)
     n_dof = len(q_dot_limits)
@@ -281,22 +267,33 @@ def topp_forward_backward_parameterization(
     if not np.all(ds_all > 0):
         raise ValueError("s_vals must be strictly increasing")
     if not np.allclose(ds_all, ds_all[0], rtol=1e-10):
-        raise ValueError("s_vals must be uniformly spaced (current impl limitation)")
+        raise ValueError("s_vals must be uniformly spaced")
+    ds = ds_all[0]
 
     if fp_vals.shape != (n_s, n_dof):
-        raise ValueError(f"fp_vals shape {fp_vals.shape} != (n_s={n_s}, n_dof={n_dof})")
+        raise ValueError(f"fp_vals shape {fp_vals.shape} != ({n_s}, {n_dof})")
     if fpp_vals.shape != (n_s, n_dof):
-        raise ValueError(f"fpp_vals shape {fpp_vals.shape} != (n_s={n_s}, n_dof={n_dof})")
+        raise ValueError(f"fpp_vals shape {fpp_vals.shape} != ({n_s}, {n_dof})")
+    if q_dot_limits.shape != (n_dof,):
+        raise ValueError(f"q_dot_limits shape {q_dot_limits.shape} != ({n_dof},)")
+    if q_ddot_limits.shape != (n_dof,):
+        raise ValueError(f"q_ddot_limits shape {q_ddot_limits.shape} != ({n_dof},)")
 
-    if np.any(q_dot_limits <= 0):
-        raise ValueError(f"q_dot_limits must all be > 0, got {q_dot_limits}")
-    if np.any(q_ddot_limits <= 0):
-        raise ValueError(f"q_ddot_limits must all be > 0, got {q_ddot_limits}")
-
+    if np.any(~np.isfinite(fp_vals)) or np.any(~np.isfinite(fpp_vals)):
+        raise ValueError("fp_vals and fpp_vals must not contain NaN or Inf")
+    if np.any(q_dot_limits <= 0) or np.any(q_ddot_limits <= 0):
+        raise ValueError("q_dot_limits and q_ddot_limits must all be > 0")
     if s_dot_start < -tolerance or s_dot_end < -tolerance:
-        raise ValueError(f"s_dot_start/end must be >= 0, got {s_dot_start}, {s_dot_end}")
+        raise ValueError("s_dot_start/end must be >= 0")
 
-    ds = ds_all[0]
+    # 非正则路径检查: 每个点至少一个关节的 |f'(s)| > 0
+    path_derivative_norm = np.linalg.norm(fp_vals, axis=1)
+    bad_indices = np.flatnonzero(path_derivative_norm < 1e-10)
+    if len(bad_indices):
+        raise ValueError(
+            f"Path is not regular (|f'(s)|=0 for all joints) at indices "
+            f"{bad_indices[:10].tolist()}"
+        )
 
     # 1. MVC: 速度约束
     s_dot_mvc = np.full(n_s, np.inf)
@@ -380,8 +377,46 @@ def topp_forward_backward_parameterization(
         s_dot_avg = max((s_dot_approx[i] + s_dot_approx[i - 1]) / 2, 1e-6)
         t_vals[i] = t_vals[i - 1] + ds / s_dot_avg
 
+    # 7. 内部约束验证: 重新计算实际关节速度/加速度并检查
+    # 区间加速度: s̈_k = (ṡ_{k+1}² - ṡ_k²) / (2 Δs)
+    s_ddot = np.zeros(n_s)
+    s_ddot[:-1] = (s_dot_approx[1:]**2 - s_dot_approx[:-1]**2) / (2 * ds)
+    s_ddot[-1] = s_ddot[-2]
+
+    q_dot_actual = fp_vals * s_dot_approx[:, None]
+    q_ddot_actual = (fp_vals * s_ddot[:, None] +
+                     fpp_vals * s_dot_approx[:, None]**2)
+
+    # 使用 2% 容差 — 前向-后向近似固有离散化误差
+    check_tol = 0.02
+    vel_ok = np.all(np.abs(q_dot_actual) <= q_dot_limits[None, :] * (1 + check_tol))
+    acc_ok = np.all(np.abs(q_ddot_actual) <= q_ddot_limits[None, :] * (1 + check_tol))
+
+    if not vel_ok:
+        max_v = np.max(np.abs(q_dot_actual), axis=0)
+        raise RuntimeError(
+            f"Velocity constraint violated in output: "
+            f"max|q̇|={max_v}, limits={q_dot_limits}"
+        )
+    if not acc_ok:
+        max_a = np.max(np.abs(q_ddot_actual), axis=0)
+        raise RuntimeError(
+            f"Acceleration constraint violated in output: "
+            f"max|q̈|={max_a}, limits={q_ddot_limits}"
+        )
+
     return s_dot_mvc, s_dot_fwd, s_dot_bwd, s_dot_approx, t_vals
 
 
-# 旧函数保留为兼容别名（重命名以反映其实际功能）
-time_optimal_parameterization = velocity_mvc_from_joint_limits
+# 旧函数保留为兼容别名（仅计算 MVC，发出弃用警告）
+import warnings as _warnings  # noqa: E402
+def _deprecated_mvc(*args, **kwargs):
+    _warnings.warn(
+        "time_optimal_parameterization is deprecated; "
+        "use velocity_mvc_from_joint_limits (MVC only) or "
+        "topp_forward_backward_parameterization (full forward-backward pass).",
+        DeprecationWarning, stacklevel=2
+    )
+    return velocity_mvc_from_joint_limits(*args, **kwargs)
+
+time_optimal_parameterization = _deprecated_mvc

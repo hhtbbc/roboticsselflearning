@@ -27,10 +27,12 @@ jobs:
       - run: git diff --exit-code -- notebooks/
         name: Check notebook sources are in sync with .ipynb
 
-      # Smoke-test representative notebooks (nbconvert mode — offline)
+      # Install kernel for notebook smoke tests
+      - run: uv run python -m ipykernel install --user --name robotics-learning --display-name "Python (robotics-learning)"
+
+      # Smoke-test representative notebooks (nbconvert mode)
       - name: Smoke test notebooks
         run: |
           uv run python scripts/check_notebooks.py --nbconvert \
             14_time_parameterization.ipynb \
-            25_integrated_project.ipynb \
-            || echo "⚠ Notebook smoke tests skipped (no kernel available in CI)"
+            25_integrated_project.ipynb

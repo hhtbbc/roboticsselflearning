@@ -145,7 +145,7 @@ class TestConfigurationSpace:
         from src.robotics_learning.planning import validate_planning_problem
         import pytest
         bounds = np.array([[10, 0], [0, 10]])  # lower > upper
-        with pytest.raises(ValueError, match="下界"):
+        with pytest.raises(ValueError, match="lower"):
             validate_planning_problem(lambda q: True, bounds,
                                       np.array([1., 1.]), np.array([9., 9.]),
                                       step_size=0.1, max_iter=100)

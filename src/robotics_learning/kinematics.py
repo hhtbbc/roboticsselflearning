@@ -157,10 +157,11 @@ def ik_2r_geometric(l1: float, l2: float, x: float, y: float) -> List[Tuple[floa
 def ik_numerical(dh_table: np.ndarray, T_des: np.ndarray,
                  q_init: np.ndarray, max_iter: int = 100,
                  position_tol: float = 1e-4, orientation_tol: float = 1e-4,
+                 position_weight: float = 1.0, orientation_weight: float = 1.0,
                  damping: float = 0.0,
                  max_step: float = 0.5) -> IKResult:
     """
-    数值法 IK（基于雅可比伪逆 / 阻尼最小二乘）
+    数值法 IK（基于加权雅可比伪逆 / 阻尼最小二乘）
 
     使用 SO(3) Log 提取姿态误差，对 180° 旋转也有效。
 
@@ -171,6 +172,8 @@ def ik_numerical(dh_table: np.ndarray, T_des: np.ndarray,
         max_iter: 最大迭代次数
         position_tol: 位置容差 (m)
         orientation_tol: 姿态容差 (rad)
+        position_weight: 位置任务权重 (缩放位置误差)
+        orientation_weight: 姿态任务权重 (缩放姿态误差)
         damping: 阻尼因子（>0 启用 DLS）
         max_step: 最大单步关节增量 (rad)
     返回:
@@ -200,7 +203,11 @@ def ik_numerical(dh_table: np.ndarray, T_des: np.ndarray,
                            orientation_error=rot_err_norm,
                            reason="Converged")
 
-        error = np.concatenate([p_err, omega_err])
+        # 加权误差: 位置 (m) 和姿态 (rad) 各自缩放
+        error = np.concatenate([
+            position_weight * p_err,
+            orientation_weight * omega_err
+        ])
 
         # 经典几何雅可比
         J = compute_geometric_jacobian(dh_table, q)

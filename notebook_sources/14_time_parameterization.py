@@ -122,7 +122,7 @@ from src.robotics_learning.trajectory import (
     s_dot_start=0.0, s_dot_end=0.0,
 )
 
-# 对比: 可行常速基线 — 检查 s_dot_const = min_i( q_dot_max,i / max_s|f'_i(s)| )
+# 对比: 巡航常速基线 (仅满足内部路径点速度/加速度约束，不考虑起止零速)
 s_dot_const_candidate = np.inf
 for d in range(2):
     max_fp = np.max(np.abs(fp_vals[:, d]))
@@ -153,14 +153,14 @@ axes[0,0].plot(s_vals, s_dot_mvc, 'k-', linewidth=2, label='MVC')
 axes[0,0].plot(s_vals, s_dot_fwd, 'b--', linewidth=1.5, label='Forward pass')
 axes[0,0].plot(s_vals, s_dot_bwd, 'r--', linewidth=1.5, label='Backward pass')
 axes[0,0].plot(s_vals, s_dot_approx, 'purple', linewidth=2.5, label='Approx ṡ(s) (teaching demo)')
-axes[0,0].plot(s_vals, s_dot_uniform, 'orange', linewidth=1, alpha=0.7, label='Feasible uniform ṡ')
+axes[0,0].plot(s_vals, s_dot_uniform, 'orange', linewidth=1, alpha=0.7, label='Cruise baseline ṡ (no zero-boundary)')
 axes[0,0].set_xlabel('s'); axes[0,0].set_ylabel('ṡ')
 axes[0,0].set_title('(s, ṡ) Phase Plane — Teaching Approximation'); axes[0,0].legend(fontsize=8); axes[0,0].grid(True, alpha=0.3)
 
 # q₁(t) 对比
 q_path_vals = np.column_stack([cs1(s_vals), cs2(s_vals)])
 axes[0,1].plot(t_approx, q_path_vals[:,0], 'purple', linewidth=2, label=f'Approx (T={t_approx[-1]:.3f}s)')
-axes[0,1].plot(t_uniform, q_path_vals[:,0], 'orange', linewidth=2, label=f'Feasible uniform (T={t_uniform[-1]:.3f}s)')
+axes[0,1].plot(t_uniform, q_path_vals[:,0], 'orange', linewidth=2, label=f'Cruise baseline (T={t_uniform[-1]:.3f}s)')
 axes[0,1].set_xlabel('t (s)'); axes[0,1].set_ylabel('q₁ (rad)')
 axes[0,1].set_title(f'Joint 1: Approx saves {(1-t_approx[-1]/t_uniform[-1])*100:.1f}% time vs uniform'); axes[0,1].legend(); axes[0,1].grid(True, alpha=0.3)
 
@@ -201,8 +201,9 @@ a_ok = np.all(np.abs(q_ddot_actual) <= q_ddot_max + tolerance)
 assert a_ok, f"加速度约束违反: max|q̈₁|={np.max(np.abs(q_ddot_actual[:,0])):.4f}, max|q̈₂|={np.max(np.abs(q_ddot_actual[:,1])):.4f}"
 
 print(f"✅ 近似参数化总时间: {t_approx[-1]:.3f}s")
-print(f"   可行常速基线: {t_uniform[-1]:.3f}s (ṡ={s_dot_const:.3f})")
+print(f"   巡航常速基线(不含起止加减速): {t_uniform[-1]:.3f}s (ṡ={s_dot_const:.3f})")
 print(f"   时间节省: {(1-t_approx[-1]/t_uniform[-1])*100:.1f}%")
+print("   注: 巡航基线假设全程匀速，不满足 ṡ(0)=ṡ(1)=0，仅供内部比较")
 print(f"✅ 速度约束 (|q̇| ≤ {q_dot_max}): 全部满足")
 print(f"✅ 加速度约束 (|q̈| ≤ {q_ddot_max}): 全部满足")
 print("⚠ 本教学版使用前向-后向近似，不保证严格时间最优。")
