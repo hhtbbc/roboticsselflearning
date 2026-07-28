@@ -190,7 +190,11 @@ class Quaternion:
     @classmethod
     def from_axis_angle(cls, axis: np.ndarray, angle: float) -> 'Quaternion':
         """从轴角构造四元数"""
-        axis = axis / np.linalg.norm(axis)
+        axis_norm = np.linalg.norm(axis)
+        if axis_norm < 1e-15:
+            # 零旋转轴: 返回单位四元数
+            return cls(1.0, 0.0, 0.0, 0.0)
+        axis = axis / axis_norm
         half = angle / 2
         return cls(np.cos(half),
                    axis[0] * np.sin(half),
@@ -224,7 +228,21 @@ class Quaternion:
 
     def normalize(self) -> 'Quaternion':
         norm = np.sqrt(self.w**2 + self.x**2 + self.y**2 + self.z**2)
+        if norm < 1e-15:
+            raise ValueError("Cannot normalize zero quaternion")
         return Quaternion(self.w/norm, self.x/norm, self.y/norm, self.z/norm)
+
+    def is_unit(self, tol: float = 1e-10) -> bool:
+        """检查是否为单位四元数"""
+        return abs(self.w**2 + self.x**2 + self.y**2 + self.z**2 - 1.0) < tol
+
+    def inverse(self) -> 'Quaternion':
+        """四元数逆: q^{-1} = q* / |q|² (适用于一般四元数)"""
+        norm_sq = self.w**2 + self.x**2 + self.y**2 + self.z**2
+        if norm_sq < 1e-15:
+            raise ValueError("Cannot invert zero quaternion")
+        return Quaternion(self.w/norm_sq, -self.x/norm_sq,
+                         -self.y/norm_sq, -self.z/norm_sq)
 
     def rotate_vector(self, v: np.ndarray) -> np.ndarray:
         """用四元数旋转向量 (q ⊗ v ⊗ q*)"""
@@ -249,6 +267,7 @@ def slerp(q1: Quaternion, q2: Quaternion, t: float) -> Quaternion:
     """球面线性插值 (Spherical Linear Interpolation)"""
     # 确保走最短路径
     cos_omega = q1.w*q2.w + q1.x*q2.x + q1.y*q2.y + q1.z*q2.z
+    cos_omega = np.clip(cos_omega, -1.0, 1.0)
     if cos_omega < 0:
         q2 = Quaternion(-q2.w, -q2.x, -q2.y, -q2.z)
         cos_omega = -cos_omega

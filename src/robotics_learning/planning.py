@@ -82,7 +82,8 @@ def periodic_steer(q_near: np.ndarray, q_rand: np.ndarray,
     dist = np.linalg.norm(direction)
     if dist < 1e-10:
         return q_near.copy()
-    return q_near + step_size * direction / dist
+    eta = min(step_size, dist)
+    return q_near + eta * direction / dist
 
 
 def point_to_segment_distance(point: np.ndarray, seg_start: np.ndarray,
@@ -556,6 +557,7 @@ def potential_field_plan(q_start: np.ndarray, q_goal: np.ndarray,
     for _ in range(max_iter):
         # 引力: F_att = -k_att * (q - q_goal)
         f_att = -k_att * (q - q_goal)
+        U_att = 0.5 * k_att * np.dot(q - q_goal, q - q_goal)
 
         # 斥力
         f_rep = np.zeros_like(q)
@@ -568,6 +570,7 @@ def potential_field_plan(q_start: np.ndarray, q_goal: np.ndarray,
                 U_rep += 0.5 * k_rep * (1/d - 1/rho_0)**2
 
         f_total = f_att + f_rep
+        U_history.append(U_att + U_rep)
 
         if np.linalg.norm(f_total) < 1e-10:
             # 局部极小值

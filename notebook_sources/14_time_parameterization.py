@@ -120,8 +120,12 @@ def compute_alpha_beta(s_idx, s_dot_val):
     alpha = -np.inf; beta = np.inf
     for d in range(2):
         fp = fp_vals[s_idx, d]; fpp = fpp_vals[s_idx, d]
-        if abs(fp) < 1e-10: continue
         term = fpp * s_dot_val**2
+        if abs(fp) < 1e-10:
+            # fp=0: 加速度约束退化为 |f''ṡ²| ≤ q̈_max
+            if abs(term) > q_ddot_max[d]:
+                alpha = max(alpha, 1e10); beta = min(beta, -1e10)  # 不可行
+            continue
         lo = (-q_ddot_max[d] - term) / fp
         hi = (q_ddot_max[d] - term) / fp
         if fp > 0:
@@ -176,7 +180,7 @@ axes[0,0].fill_between(s_vals, 0, s_dot_mvc, color='lightgreen', alpha=0.3, labe
 axes[0,0].plot(s_vals, s_dot_mvc, 'k-', linewidth=2, label='MVC')
 axes[0,0].plot(s_vals, s_dot_fwd, 'b--', linewidth=1.5, label='Forward pass')
 axes[0,0].plot(s_vals, s_dot_bwd, 'r--', linewidth=1.5, label='Backward pass')
-axes[0,0].plot(s_vals, s_dot_opt, 'purple', linewidth=2.5, label='Optimal ṡ(s)')
+axes[0,0].plot(s_vals, s_dot_opt, 'purple', linewidth=2.5, label='Approximate ṡ(s) (teaching demo)')
 axes[0,0].plot(s_vals, s_dot_uniform, 'orange', linewidth=1, alpha=0.7, label='Uniform ṡ')
 axes[0,0].set_xlabel('s'); axes[0,0].set_ylabel('ṡ')
 axes[0,0].set_title('(s, ṡ) Phase Plane — TOPP'); axes[0,0].legend(fontsize=8); axes[0,0].grid(True, alpha=0.3)
@@ -186,7 +190,7 @@ q_opt = np.column_stack([cs1(s_vals), cs2(s_vals)])
 axes[0,1].plot(t_path, q_opt[:,0], 'purple', linewidth=2, label=f'TOPP (T={t_path[-1]:.3f}s)')
 axes[0,1].plot(t_uniform, q_opt[:,0], 'orange', linewidth=2, label=f'Uniform (T={t_uniform[-1]:.3f}s)')
 axes[0,1].set_xlabel('t (s)'); axes[0,1].set_ylabel('q₁ (rad)')
-axes[0,1].set_title(f'Joint 1: TOPP saves {(1-t_path[-1]/t_uniform[-1])*100:.1f}% time'); axes[0,1].legend(); axes[0,1].grid(True, alpha=0.3)
+axes[0,1].set_title(f'Joint 1: Approx saves {(1-t_path[-1]/t_uniform[-1])*100:.1f}% time'); axes[0,1].legend(); axes[0,1].grid(True, alpha=0.3)
 
 # 速度
 q_dot_opt = fp_vals * s_dot_opt[:, None]  # q̇ = f'(s)ṡ
@@ -216,7 +220,9 @@ q_ddot_actual = fp_vals * s_ddot_actual[:, None] + fpp_vals * s_dot_opt[:, None]
 v_ok = np.all(np.abs(q_dot_actual) <= q_dot_max * 1.01, axis=1)
 a_ok = np.all(np.abs(q_ddot_actual) <= q_ddot_max * 1.01, axis=1)
 print(f"TOPP 总时间: {t_path[-1]:.3f}s, 均匀: {t_uniform[-1]:.3f}s, 节省: {(1-t_path[-1]/t_uniform[-1])*100:.1f}%")
-print(f"可行性: 速度约束 {np.mean(v_ok)*100:.0f}% 满足, 加速度约束 {np.mean(a_ok)*100:.0f}% 满足")
+print(f"可行性: 速度 {np.mean(v_ok)*100:.0f}% 满足, 加速度 {np.mean(a_ok)*100:.0f}% 满足")
+print("⚠ 教学版前向-后向近似不能保证严格时间最优或全部约束满足。")
+print("  生产级 TOPP 请使用 TOPP-RA 或 toppra 库。")
 
 # %% [markdown]
 # ## 6. 练习题
